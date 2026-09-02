@@ -1,0 +1,10 @@
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv
+.env
+data/eval_results/*
+!data/eval_results/.gitkeep
