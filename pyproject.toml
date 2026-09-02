@@ -1,0 +1,16 @@
+[project]
+name = "research-copilot"
+version = "0.1.0"
+description = "Research Copilot with full observability stack"
+requires-python = ">=3.11"
+dependencies = [
+    "opentelemetry-exporter-otlp-proto-http>=1.44.0",
+    "opentelemetry-sdk>=1.44.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/research_copilot"]
