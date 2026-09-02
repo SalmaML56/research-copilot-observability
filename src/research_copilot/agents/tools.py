@@ -1,41 +1,50 @@
 """
-Web search tool for our agents.
-
-Uses `ddgs` (DuckDuckGo Search) instead of a paid API like Tavily/SerpAPI —
-deliberately, so this project runs with zero extra signups or API keys for
-search. If result quality becomes a problem later (Phase 6 evals will surface
-this objectively via correctness scores), swapping to Tavily is a ~10-line
-change confined to this one file.
+Tools available to the agents. Currently just web_search, used by the
+researcher subagent.
 """
 
+import time
 from ddgs import DDGS
+from ddgs.exceptions import DDGSException
 from langchain_core.tools import tool
 
 
 @tool
 def web_search(query: str, max_results: int = 5) -> str:
     """
-    Search the web for a query and return the top results as plain text.
+    Search the web and return a summary of results (titles, snippets, URLs)
+    for the given query.
 
-    Args:
-        query: What to search for.
-        max_results: How many results to return (default 5, keep this low —
-            more results means more tokens fed back into the LLM's context).
-
-    Returns:
-        A newline-separated list of "title: snippet (url)" strings, or a
-        message saying no results were found.
+    Retries a few times with backoff because DuckDuckGo occasionally rate
+    limits or returns "No results found" for requests coming from cloud /
+    datacenter IPs (e.g. GitHub Codespaces) — this is usually transient,
+    not a real absence of results.
     """
-    results = DDGS().text(query, max_results=max_results)
+    last_error: Exception | None = None
 
-    if not results:
-        return f"No search results found for query: {query!r}"
+    for attempt in range(3):
+        try:
+            results = DDGS().text(query, max_results=max_results)
+            if not results:
+                raise DDGSException("No results found.")
 
-    lines = []
-    for r in results:
-        title = r.get("title", "").strip()
-        body = r.get("body", "").strip()
-        href = r.get("href", "").strip()
-        lines.append(f"{title}: {body} ({href})")
+            formatted = "\n\n".join(
+                f"Title: {r.get('title', '')}\n"
+                f"URL: {r.get('href', '')}\n"
+                f"Snippet: {r.get('body', '')}"
+                for r in results
+            )
+            return formatted or "No results found."
 
-    return "\n".join(lines)
+        except DDGSException as e:
+            last_error = e
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))  # 2s, then 4s backoff
+                continue
+
+    return (
+        f"Search failed after retries for query '{query}': {last_error}. "
+        "This is often a temporary block on cloud IPs — try a more specific "
+        "or differently worded query, or note in your notes file that this "
+        "subtopic could not be searched."
+    )

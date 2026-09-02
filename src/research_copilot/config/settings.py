@@ -9,38 +9,31 @@ of hunting through the whole codebase.
 
 import os
 from dotenv import load_dotenv
+from langchain_groq import ChatGroq
 
-# Loads variables from a local .env file (if present) into the process
-# environment. In Codespaces/CI, real env vars set outside .env also work —
-# load_dotenv() does not override variables that are already set.
 load_dotenv()
 
 
 class Settings:
-    # Which environment this process is running in. Gets stamped onto every
-    # span per the trace contract (docs/trace-contract.md).
     environment: str = os.getenv("ENVIRONMENT", "dev")
-
-    # Groq is our chosen model provider — genuinely free tier, no credit
-    # card, rate-limited (not a trial credit that runs out).
     groq_api_key: str | None = os.getenv("GROQ_API_KEY")
-
-    # Which Groq-hosted model the main agent uses by default. Kept as a
-    # setting (not hardcoded in agent code) so we can swap models per
-    # environment without touching agent logic.
-    default_model: str = os.getenv("DEFAULT_MODEL", "groq:openai/gpt-oss-120b")
+    default_model_name: str = os.getenv("DEFAULT_MODEL_NAME", "openai/gpt-oss-120b")
+    max_tokens: int = int(os.getenv("MAX_TOKENS", "4096"))
 
     def validate(self) -> None:
-        """
-        Fail loudly and early if a required secret is missing, instead of
-        letting the agent fail deep inside a LangGraph call with a confusing
-        stack trace.
-        """
         if not self.groq_api_key:
             raise RuntimeError(
                 "GROQ_API_KEY is not set. Copy .env.example to .env "
                 "and fill in your key before running any agent code."
             )
+
+    @property
+    def default_model(self) -> ChatGroq:
+        return ChatGroq(
+            model=self.default_model_name,
+            api_key=self.groq_api_key,
+            max_tokens=self.max_tokens,
+        )
 
 
 settings = Settings()
