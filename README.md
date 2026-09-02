@@ -39,7 +39,7 @@ in progress.
 
 ```bash
 cp .env.example .env
-# edit .env, set ANTHROPIC_API_KEY
+# edit .env, set grok_API_KEY
 
 uv sync
 ```
