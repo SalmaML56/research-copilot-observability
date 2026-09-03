@@ -18,6 +18,7 @@ Run:
 """
 
 from deepagents import create_deep_agent, FilesystemMiddleware
+from langchain.agents.middleware import TodoListMiddleware
 
 from research_copilot.agents.tools import web_search
 from research_copilot.config.settings import settings
@@ -58,11 +59,12 @@ writer = {
 agent = create_deep_agent(
     model=settings.default_model,
     subagents=[researcher, writer],
+    middleware=[TodoListMiddleware()],
     system_prompt=(
         "Lead agent. Plan the task briefly, delegate web research to "
         "'researcher' (give it the search topic and a filename), then once "
         "notes exist, delegate writing to 'writer' (give it the filename). "
-        "Don't search or write files yourself."
+        "Don't search or write files yourself. If a subagent reports it completed its task, TRUST that its file writes succeeded — do not redo its work or claim the file handoff failed unless you explicitly try read_file and get a real error."
     ),
 )
 

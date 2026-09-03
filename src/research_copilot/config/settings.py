@@ -9,29 +9,39 @@ of hunting through the whole codebase.
 
 import os
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
+from langchain_deepseek import ChatDeepSeek
 
 load_dotenv()
 
 
 class Settings:
     environment: str = os.getenv("ENVIRONMENT", "dev")
-    groq_api_key: str | None = os.getenv("GROQ_API_KEY")
-    default_model_name: str = os.getenv("DEFAULT_MODEL_NAME", "openai/gpt-oss-120b")
+    deepseek_api_key: str | None = os.getenv("DEEPSEEK_API_KEY")
+
+    # deepseek-chat = DeepSeek-V3, supports tool calling (needed for our
+    # web_search / write_file / read_file tools).
+    # deepseek-reasoner = R1, does NOT support tool calling — do not use
+    # it for this project's agents.
+    default_model_name: str = os.getenv("DEFAULT_MODEL_NAME", "deepseek-chat")
     max_tokens: int = int(os.getenv("MAX_TOKENS", "4096"))
 
     def validate(self) -> None:
-        if not self.groq_api_key:
+        """
+        Fail loudly and early if a required secret is missing, instead of
+        letting the agent fail deep inside a LangGraph call with a confusing
+        stack trace.
+        """
+        if not self.deepseek_api_key:
             raise RuntimeError(
-                "GROQ_API_KEY is not set. Copy .env.example to .env "
-                "and fill in your key before running any agent code."
+                "DEEPSEEK_API_KEY is not set. Add it to .env before "
+                "running any agent code."
             )
 
     @property
-    def default_model(self) -> ChatGroq:
-        return ChatGroq(
+    def default_model(self) -> ChatDeepSeek:
+        return ChatDeepSeek(
             model=self.default_model_name,
-            api_key=self.groq_api_key,
+            api_key=self.deepseek_api_key,
             max_tokens=self.max_tokens,
         )
 
