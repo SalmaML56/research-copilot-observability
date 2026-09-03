@@ -1,6 +1,5 @@
 """
-Tools available to the agents. Currently just web_search, used by the
-researcher subagent.
+Tools available to the agents.
 """
 
 import time
@@ -14,11 +13,6 @@ def web_search(query: str, max_results: int = 5) -> str:
     """
     Search the web and return a summary of results (titles, snippets, URLs)
     for the given query.
-
-    Retries a few times with backoff because DuckDuckGo occasionally rate
-    limits or returns "No results found" for requests coming from cloud /
-    datacenter IPs (e.g. GitHub Codespaces) — this is usually transient,
-    not a real absence of results.
     """
     last_error: Exception | None = None
 
@@ -39,12 +33,24 @@ def web_search(query: str, max_results: int = 5) -> str:
         except DDGSException as e:
             last_error = e
             if attempt < 2:
-                time.sleep(2 * (attempt + 1))  # 2s, then 4s backoff
+                time.sleep(2 * (attempt + 1))
                 continue
 
     return (
         f"Search failed after retries for query '{query}': {last_error}. "
         "This is often a temporary block on cloud IPs — try a more specific "
-        "or differently worded query, or note in your notes file that this "
-        "subtopic could not be searched."
+        "or differently worded query."
     )
+
+
+@tool
+def finalize_report(report_text: str) -> str:
+    """
+    Marks the final report as ready for publication. This is the LAST step
+    in the workflow — call this only once the writer subagent has produced
+    a complete final report and you are ready to submit it.
+
+    Step 10 (human-in-the-loop): this tool requires human approval before
+    it actually executes — the agent will pause here until approved.
+    """
+    return f"Report finalized and published ({len(report_text)} characters)."

@@ -3,6 +3,7 @@ Shared subagent definitions for the Research Copilot.
 """
 
 from deepagents import FilesystemMiddleware
+
 from research_copilot.agents.tools import web_search
 
 researcher = {
@@ -52,5 +53,8 @@ LEAD_AGENT_SYSTEM_PROMPT = (
     "delegate. If a subagent reports its task is done, TRUST that its "
     "file writes succeeded — do not redo its work or claim the file "
     "handoff failed unless you explicitly try read_file and get a real "
-    "error."
+    "error. Once the writer has returned the final report text to you, "
+    "call the finalize_report tool with that report text as the final "
+    "step — this requires human approval before it completes, so expect "
+    "the run to pause there."
 )
