@@ -11,15 +11,11 @@ instrumented end-to-end with OpenTelemetry, Langfuse, Phoenix, and Grafana.
 
 ## Status
 
-This project is built phase by phase, each on its own branch, merged into
-`develop`. See `docs/progress.md` for exactly which phase/step is currently
-in progress.
-
 | Phase | What it adds | Status |
 |---|---|---|
 | 0 | Folder structure, OTel Collector (debug exporter), trace docs | Done |
-| 1 | Deep Agent core: planner + researcher + writer subagents | In progress |
-| 2 | Langfuse tracing | Not started |
+| 1 | Deep Agent core: planner + researcher + writer, checkpointer, human-in-the-loop, streaming, dual model profiles, test dataset | Done |
+| 2 | Langfuse tracing | In progress |
 | 3 | Migrate to OpenTelemetry (OpenInference/OpenLLMetry) | Not started |
 | 4 | Arize Phoenix + Grafana/Tempo/Prometheus/Loki stack | Not started |
 | 5 | Metrics dashboards + alerts | Not started |
@@ -33,13 +29,13 @@ in progress.
 - Python 3.11+
 - `uv` — this project's package manager (never `pip`/`poetry` directly)
 - Git
-- An Anthropic API key (this project uses Claude as its model provider)
+- A DeepSeek API key (primary model), optionally a Groq API key (cheap/alternate profile)
 
 ## Setup
 
 ```bash
 cp .env.example .env
-# edit .env, set Grok_API_KEY
+# edit .env, set DEEPSEEK_API_KEY (and optionally GROQ_API_KEY)
 
 uv sync
 ```
@@ -54,16 +50,38 @@ uv run python -m research_copilot.observability.send_test_span
 docker compose logs otel-collector | tail -40
 ```
 
-Run the hello-world agent (Phase 1, step 6):
+Run the plain agent (Phase 1, steps 6-8):
 
 ```bash
-uv run python -m research_copilot.agents.hello_world
+uv run python -m research_copilot.agents.main_agent
+```
+
+Run with a checkpointer + human-in-the-loop approval (Phase 1, steps 9-10):
+
+```bash
+uv run python -m research_copilot.agents.checkpointed_agent "your research task"
+uv run python -m research_copilot.agents.run_interrupt_demo
+```
+
+Run with streaming typed events (Phase 1, step 11):
+
+```bash
+uv run python -m research_copilot.agents.run_streaming_demo
+```
+
+Switch to the cheap/free model profile (Phase 1, step 12):
+
+```bash
+MODEL_PROFILE=cheap uv run python -m research_copilot.agents.main_agent
 ```
 
 ## Project layout
 
 See `docs/trace-contract.md`, `docs/trace-vs-span.md`, `docs/otel-genai-cheatsheet.md`,
 and `docs/langchain-layers.md` for the design notes written during Phase 0.
+
+`data/test_dataset.jsonl` holds 25 research prompts with expected facts,
+used for Phase 6 evaluation.
 
 ## Branching
 
