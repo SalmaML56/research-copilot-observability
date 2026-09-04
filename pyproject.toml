@@ -4,8 +4,15 @@ version = "0.1.0"
 description = "Research Copilot with full observability stack"
 requires-python = ">=3.11"
 dependencies = [
+    "ddgs>=9.16.0",
+    "deepagents>=0.7.12",
+    "langchain-deepseek>=1.1.0",
+    "langchain-google-genai>=4.4.0",
+    "langchain-groq>=1.1.3",
+    "langgraph-checkpoint-sqlite>=3.1.1",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-sdk>=1.44.0",
+    "python-dotenv>=1.2.3",
 ]
 
 [build-system]
