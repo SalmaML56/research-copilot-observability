@@ -33,7 +33,13 @@ if __name__ == "__main__":
 
     result = agent.invoke(
         {"messages": [{"role": "user", "content": task}]},
-        config={"callbacks": [get_langfuse_handler()]},
+        config={
+            "callbacks": [get_langfuse_handler()],
+            "metadata": {
+                "langfuse_session_id": "demo-session-001",
+                "langfuse_user_id": "demo-user-salma",
+            },
+        },
     )
 
     final_message = result["messages"][-1]
