@@ -1,14 +1,23 @@
 """
 Tools available to the agents.
+
+Phase 2, step 17: both tools are wrapped with Langfuse's @observe decorator
+(as_type="tool") so they appear as explicit tool-type spans in Langfuse,
+with their real inputs/outputs captured — not just as generic function
+calls inferred from the LangChain callback handler alone. Verified that
+@observe placed under @tool preserves LangChain's schema introspection
+(tool.name, .description, .args all still correct).
 """
 
 import time
 from ddgs import DDGS
 from ddgs.exceptions import DDGSException
 from langchain_core.tools import tool
+from langfuse import observe
 
 
 @tool
+@observe(as_type="tool")
 def web_search(query: str, max_results: int = 5) -> str:
     """
     Search the web and return a summary of results (titles, snippets, URLs)
@@ -44,6 +53,7 @@ def web_search(query: str, max_results: int = 5) -> str:
 
 
 @tool
+@observe(as_type="tool")
 def finalize_report(report_text: str) -> str:
     """
     Marks the final report as ready for publication. This is the LAST step
