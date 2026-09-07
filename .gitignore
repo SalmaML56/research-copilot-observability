@@ -8,3 +8,4 @@ wheels/
 .env
 data/eval_results/*
 !data/eval_results/.gitkeep
+checkpoints.sqlite
