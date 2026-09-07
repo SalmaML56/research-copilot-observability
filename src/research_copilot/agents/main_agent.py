@@ -9,6 +9,7 @@ from langchain.agents.middleware import TodoListMiddleware
 
 from research_copilot.agents.subagents import researcher, writer, LEAD_AGENT_SYSTEM_PROMPT
 from research_copilot.config.settings import settings
+from research_copilot.observability.langfuse_setup import get_langfuse_handler
 
 settings.validate()
 
@@ -30,7 +31,10 @@ if __name__ == "__main__":
     )
     print(f"Task: {task}\n")
 
-    result = agent.invoke({"messages": [{"role": "user", "content": task}]})
+    result = agent.invoke(
+        {"messages": [{"role": "user", "content": task}]},
+        config={"callbacks": [get_langfuse_handler()]},
+    )
 
     final_message = result["messages"][-1]
     print("=== Final answer ===\n")
