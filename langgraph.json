@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "research_copilot": "./src/research_copilot/agents/studio_agent.py:graph"
+  },
+  "env": ".env"
+}
