@@ -8,6 +8,7 @@ from deepagents import create_deep_agent
 from langchain.agents.middleware import TodoListMiddleware
 
 from research_copilot.agents.subagents import researcher, writer, LEAD_AGENT_SYSTEM_PROMPT
+from research_copilot.agents.tools import finalize_report
 from research_copilot.config.settings import settings
 from research_copilot.observability.langfuse_setup import get_langfuse_handler
 
@@ -15,6 +16,7 @@ settings.validate()
 
 agent = create_deep_agent(
     model=settings.default_model,
+    tools=[finalize_report],
     subagents=[researcher, writer],
     middleware=[TodoListMiddleware()],
     system_prompt=LEAD_AGENT_SYSTEM_PROMPT,
