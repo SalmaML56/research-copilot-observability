@@ -1,19 +1,21 @@
 """
 Tools available to the agents.
 
-Phase 2, step 17: both tools are wrapped with Langfuse's @observe decorator
-(as_type="tool") so they appear as explicit tool-type spans in Langfuse,
-with their real inputs/outputs captured — not just as generic function
-calls inferred from the LangChain callback handler alone. Verified that
-@observe placed under @tool preserves LangChain's schema introspection
-(tool.name, .description, .args all still correct).
+Step 18 follow-up fix (Finding 3): when web_search exhausts its retries
+and returns a failure string, we now explicitly mark that span as a
+Langfuse WARNING (via update_current_span) instead of letting it default
+to a plain "success" status. Before this fix, a failed search was
+indistinguishable from a successful one at a glance in the Langfuse
+dashboard — you had to open the span and read its Output text to tell.
+Now a failed search visibly shows an orange/warning status in the trace
+UI, matching what actually happened.
 """
 
 import time
 from ddgs import DDGS
 from ddgs.exceptions import DDGSException
 from langchain_core.tools import tool
-from langfuse import observe
+from langfuse import get_client, observe
 
 
 @tool
@@ -44,6 +46,14 @@ def web_search(query: str, max_results: int = 5) -> str:
             if attempt < 2:
                 time.sleep(2 * (attempt + 1))
                 continue
+
+    try:
+        get_client().update_current_span(
+            level="WARNING",
+            status_message=f"web_search exhausted retries: {last_error}",
+        )
+    except Exception:
+        pass
 
     return (
         f"Search failed after retries for query '{query}': {last_error}. "
