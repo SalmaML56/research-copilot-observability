@@ -5,17 +5,35 @@ Run:
 """
 
 from deepagents import create_deep_agent
-from langchain.agents.middleware import TodoListMiddleware
+from langchain.agents.middleware import TodoListMiddleware, SummarizationMiddleware
 
 from research_copilot.agents.subagents import researcher, writer, LEAD_AGENT_SYSTEM_PROMPT
+from research_copilot.agents.tools import finalize_report
 from research_copilot.config.settings import settings
+from research_copilot.observability.langfuse_setup import get_langfuse_handler
 
 settings.validate()
 
 agent = create_deep_agent(
     model=settings.default_model,
+    tools=[finalize_report],
     subagents=[researcher, writer],
-    middleware=[TodoListMiddleware()],
+    middleware=[
+        TodoListMiddleware(),
+        # Step 18 follow-up fix (Finding 1): mitigates the "cost scales
+        # with delegation depth" issue. Once the running conversation
+        # passes ~30,000 tokens, this automatically compresses older
+        # messages into a summary before the next LLM call, instead of
+        # re-sending the full, ever-growing history every time. Keeps the
+        # most recent 15 messages verbatim. Does NOT eliminate the
+        # underlying behavior (LLMs still have no cross-call memory) — it
+        # caps how large the resent context is allowed to grow.
+        SummarizationMiddleware(
+            model=settings.default_model,
+            trigger=("tokens", 30000),
+            keep=("messages", 15),
+        ),
+    ],
     system_prompt=LEAD_AGENT_SYSTEM_PROMPT,
 )
 
@@ -30,7 +48,16 @@ if __name__ == "__main__":
     )
     print(f"Task: {task}\n")
 
-    result = agent.invoke({"messages": [{"role": "user", "content": task}]})
+    result = agent.invoke(
+        {"messages": [{"role": "user", "content": task}]},
+        config={
+            "callbacks": [get_langfuse_handler()],
+            "metadata": {
+                "langfuse_session_id": "demo-session-001",
+                "langfuse_user_id": "demo-user-salma",
+            },
+        },
+    )
 
     final_message = result["messages"][-1]
     print("=== Final answer ===\n")

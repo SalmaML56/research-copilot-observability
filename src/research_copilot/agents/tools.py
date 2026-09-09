@@ -1,14 +1,25 @@
 """
 Tools available to the agents.
+
+Step 18 follow-up fix (Finding 3): when web_search exhausts its retries
+and returns a failure string, we now explicitly mark that span as a
+Langfuse WARNING (via update_current_span) instead of letting it default
+to a plain "success" status. Before this fix, a failed search was
+indistinguishable from a successful one at a glance in the Langfuse
+dashboard — you had to open the span and read its Output text to tell.
+Now a failed search visibly shows an orange/warning status in the trace
+UI, matching what actually happened.
 """
 
 import time
 from ddgs import DDGS
 from ddgs.exceptions import DDGSException
 from langchain_core.tools import tool
+from langfuse import get_client, observe
 
 
 @tool
+@observe(as_type="tool")
 def web_search(query: str, max_results: int = 5) -> str:
     """
     Search the web and return a summary of results (titles, snippets, URLs)
@@ -36,6 +47,14 @@ def web_search(query: str, max_results: int = 5) -> str:
                 time.sleep(2 * (attempt + 1))
                 continue
 
+    try:
+        get_client().update_current_span(
+            level="WARNING",
+            status_message=f"web_search exhausted retries: {last_error}",
+        )
+    except Exception:
+        pass
+
     return (
         f"Search failed after retries for query '{query}': {last_error}. "
         "This is often a temporary block on cloud IPs — try a more specific "
@@ -44,6 +63,7 @@ def web_search(query: str, max_results: int = 5) -> str:
 
 
 @tool
+@observe(as_type="tool")
 def finalize_report(report_text: str) -> str:
     """
     Marks the final report as ready for publication. This is the LAST step
