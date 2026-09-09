@@ -13,6 +13,7 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=3.1.1",
     "openinference-instrumentation-langchain>=0.1.74",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
+    "opentelemetry-instrumentation-langchain>=0.62.3",
     "opentelemetry-sdk>=1.44.0",
     "python-dotenv>=1.2.3",
 ]
