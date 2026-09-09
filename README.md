@@ -15,8 +15,8 @@ instrumented end-to-end with OpenTelemetry, Langfuse, Phoenix, and Grafana.
 |---|---|---|
 | 0 | Folder structure, OTel Collector (debug exporter), trace docs | Done |
 | 1 | Deep Agent core: planner + researcher + writer, checkpointer, human-in-the-loop, streaming, dual model profiles, test dataset | Done |
-| 2 | Langfuse tracing | In progress |
-| 3 | Migrate to OpenTelemetry (OpenInference/OpenLLMetry) | Not started |
+| 2 | Langfuse tracing | Done |
+| 3 | Migrate to OpenTelemetry (OpenInference/OpenLLMetry) | In progress |
 | 4 | Arize Phoenix + Grafana/Tempo/Prometheus/Loki stack | Not started |
 | 5 | Metrics dashboards + alerts | Not started |
 | 6 | Evaluation framework (DeepEval/Ragas, trajectory scorers) | Not started |
