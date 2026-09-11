@@ -9,3 +9,13 @@ services:
       - "4317:4317"
       - "4318:4318"
     mem_limit: 512m
+
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: phoenix
+    ports:
+      - "6006:6006"
+      - "4319:4317"
+    environment:
+      - "PHOENIX_SQL_DATABASE_URL=sqlite:///:memory:"
+    mem_limit: 768m
