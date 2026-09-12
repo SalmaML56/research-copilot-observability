@@ -19,3 +19,10 @@ services:
     environment:
       - "PHOENIX_SQL_DATABASE_URL=sqlite:///:memory:"
     mem_limit: 768m
+
+  grafana-lgtm:
+    image: grafana/otel-lgtm
+    container_name: grafana-lgtm
+    ports:
+      - "3001:3000"
+    mem_limit: 1536m

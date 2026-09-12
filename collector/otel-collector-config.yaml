@@ -17,10 +17,12 @@ processors:
 exporters:
   debug:
     verbosity: detailed
+  otlphttp/grafana:
+    endpoint: http://grafana-lgtm:4318
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [gen_ai_normalizer]
-      exporters: [debug]
+      exporters: [debug, otlphttp/grafana]
