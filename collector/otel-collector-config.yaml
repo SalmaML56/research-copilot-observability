@@ -6,12 +6,23 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
+processors:
+  gen_ai_normalizer:
+    sources:
+      - name: openinference
+        remove_originals: true
+      - name: openllmetry
+        remove_originals: true
+
 exporters:
   debug:
     verbosity: detailed
+  otlphttp/grafana:
+    endpoint: http://grafana-lgtm:4318
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
-      exporters: [debug]
+      processors: [gen_ai_normalizer]
+      exporters: [debug, otlphttp/grafana]

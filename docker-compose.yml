@@ -1,6 +1,6 @@
 services:
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.108.0
+    image: otel/opentelemetry-collector-contrib:0.159.0
     container_name: otel-collector
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
@@ -9,3 +9,20 @@ services:
       - "4317:4317"
       - "4318:4318"
     mem_limit: 512m
+
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: phoenix
+    ports:
+      - "6006:6006"
+      - "4319:4317"
+    environment:
+      - "PHOENIX_SQL_DATABASE_URL=sqlite:///:memory:"
+    mem_limit: 768m
+
+  grafana-lgtm:
+    image: grafana/otel-lgtm
+    container_name: grafana-lgtm
+    ports:
+      - "3001:3000"
+    mem_limit: 1536m
