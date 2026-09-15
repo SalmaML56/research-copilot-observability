@@ -1,15 +1,6 @@
 """
 Phase 3, step 20: OpenInference auto-instrumentation for LangChain.
-
-This replaces manual span creation with automatic conversion: once
-LangChainInstrumentor().instrument() is called, every LangChain/LangGraph
-call our agent makes is automatically turned into a standard
-OpenTelemetry span — no code changes needed inside main_agent.py,
-subagents.py, or tools.py themselves.
-
-This is DIFFERENT from Phase 2's Langfuse CallbackHandler. OpenInference
-produces vendor-neutral OTel spans that any OTel-compatible backend (our
-Collector, Phoenix, Grafana/Tempo) can receive — not just Langfuse.
+Idempotent — calling twice returns the same provider.
 """
 
 import os
@@ -21,27 +12,26 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.resources import Resource
 from openinference.instrumentation.langchain import LangChainInstrumentor
 
-_instrumented = False
+from research_copilot.observability.identity import IdentitySpanProcessor
+
+_provider = None
 
 
 def setup_otel_instrumentation() -> TracerProvider:
-    """
-    Sets up an OTel TracerProvider pointed at our Collector, and
-    instruments LangChain so all agent activity is automatically traced.
-    Safe to call more than once — only instruments on the first call.
-    """
-    global _instrumented
+    global _provider
+
+    if _provider is not None:
+        return _provider
 
     otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
-
     resource = Resource.create({"service.name": "research-copilot-agent"})
     provider = TracerProvider(resource=resource)
     exporter = OTLPSpanExporter(endpoint=f"{otlp_endpoint}/v1/traces")
     provider.add_span_processor(BatchSpanProcessor(exporter))
+    provider.add_span_processor(IdentitySpanProcessor())
     trace.set_tracer_provider(provider)
 
-    if not _instrumented:
-        LangChainInstrumentor().instrument(tracer_provider=provider)
-        _instrumented = True
+    LangChainInstrumentor().instrument(tracer_provider=provider)
 
-    return provider
+    _provider = provider
+    return _provider
