@@ -9,3 +9,5 @@ wheels/
 data/eval_results/*
 !data/eval_results/.gitkeep
 checkpoints.sqlite
+checkpoints.sqlite-shm
+checkpoints.sqlite-wal
