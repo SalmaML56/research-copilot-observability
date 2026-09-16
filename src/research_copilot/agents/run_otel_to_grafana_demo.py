@@ -9,12 +9,12 @@ Run:
 import uuid
 
 from opentelemetry import trace
-from openinference.instrumentation.langchain import LangChainInstrumentor
 
 from research_copilot.observability.otel_setup import setup_otel_instrumentation
 
 provider = setup_otel_instrumentation()
-LangChainInstrumentor().instrument(tracer_provider=provider)
+# NOTE: setup_otel_instrumentation() already calls LangChainInstrumentor().instrument()
+# internally - do not call it again here (was a redundant double-instrument call, Step 20).
 
 from research_copilot.agents.main_agent import agent  # noqa: E402
 
