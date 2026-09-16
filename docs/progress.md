@@ -56,8 +56,20 @@ Branch: develop
     a function, not module-level), send_test_span.py and run_phoenix_demo.py
     (hardcoded endpoints, no env var read), run_otel_to_langfuse_demo.py
     (load_dotenv() already correctly placed before the read).
-  - Step 30: two FastAPI response bugs (text blocks -> 500, pending interrupt
-    reported as completed) - not yet checked
+  - Step 30: two FastAPI response bugs - FIXED AND VERIFIED.
+    Bug A (text blocks -> 500): message.content could be a list of blocks
+    instead of a plain string, which failed Pydantic validation on
+    ResearchResponse.answer. Added _extract_text_content() helper to
+    normalize both shapes. Verified: unit test on both input shapes passes,
+    and a real HTTP request returns a clean string answer (HTTP 200).
+    Bug B (pending interrupt reported as completed): approve() did not
+    re-check state.next after resuming, so a second pending interrupt was
+    incorrectly reported as status=completed. Added a state.next re-check
+    after the resume invoke, mirroring the pattern already used in
+    research(). Verified structurally (re-check happens after invoke,
+    before the completed response) - a live two-interrupt scenario was not
+    reproduced end-to-end since it depends on unpredictable agent behavior,
+    noted here rather than silently claimed as fully live-tested.
 - Step 18 — Run remaining 8/10 dataset prompts, rewrite findings (unblocked by Step 14, not started)
 - Steps 15, 16, 26 — Langfuse-dependent verification, not started
 - Step 22, 25, 28, 32 — missing demonstrations, not started
