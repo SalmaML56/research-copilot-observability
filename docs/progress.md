@@ -40,8 +40,12 @@ Branch: develop
     profile (raises RuntimeError with clear message) and a valid profile
     (passes without error). Also fixed a stale comment in hello_world.py
     that referenced the wrong env var name.
-  - Step 20: setup_otel_instrumentation() idempotency - commit fbcdf08 claims
-    this is fixed, NOT YET independently re-verified
+  - Step 20: setup_otel_instrumentation() idempotency - VERIFIED. Called
+    twice, confirmed same provider object returned and zero warnings.
+    Also found and fixed a related issue: run_otel_to_grafana_demo.py was
+    calling LangChainInstrumentor().instrument() a second time redundantly
+    (setup_otel_instrumentation() already does this internally) - removed
+    the duplicate call.
   - Step 21: OTEL_EXPORTER_OTLP_ENDPOINT load-order bug - not yet checked
   - Step 30: two FastAPI response bugs (text blocks -> 500, pending interrupt
     reported as completed) - not yet checked
