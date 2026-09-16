@@ -16,12 +16,15 @@ Run:
 
 import os
 
+from dotenv import load_dotenv
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.instrumentation.langchain import LangchainInstrumentor
+
+load_dotenv()  # Step 21: must load .env before reading OTEL_EXPORTER_OTLP_ENDPOINT below
 
 otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 resource = Resource.create({"service.name": "research-copilot-agent-openllmetry"})

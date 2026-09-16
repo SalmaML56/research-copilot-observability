@@ -46,7 +46,16 @@ Branch: develop
     calling LangChainInstrumentor().instrument() a second time redundantly
     (setup_otel_instrumentation() already does this internally) - removed
     the duplicate call.
-  - Step 21: OTEL_EXPORTER_OTLP_ENDPOINT load-order bug - not yet checked
+  - Step 21: OTEL_EXPORTER_OTLP_ENDPOINT load-order bug - VERIFIED AND FIXED.
+    Checked all 6 files reading this env var or OTLPSpanExporter. Found 2 with
+    the bug (module-level os.getenv() before any load_dotenv() call):
+    context_propagation_demo.py and run_openllmetry_demo.py. Added load_dotenv()
+    before the getenv() call in both. Verified with a real .env value - both
+    files now correctly pick up a custom OTEL_EXPORTER_OTLP_ENDPOINT.
+    Other 4 files checked and confirmed safe: otel_setup.py (getenv is inside
+    a function, not module-level), send_test_span.py and run_phoenix_demo.py
+    (hardcoded endpoints, no env var read), run_otel_to_langfuse_demo.py
+    (load_dotenv() already correctly placed before the read).
   - Step 30: two FastAPI response bugs (text blocks -> 500, pending interrupt
     reported as completed) - not yet checked
 - Step 18 — Run remaining 8/10 dataset prompts, rewrite findings (unblocked by Step 14, not started)
