@@ -39,6 +39,28 @@ class ResearchResponse(BaseModel):
     answer: str | None = None
 
 
+def _extract_text_content(content) -> str:
+    """
+    Step 30 fix: message.content is normally a plain string, but some
+    model/agent paths return a list of content blocks
+    (e.g. [{"type": "text", "text": "..."}]). Returning that list
+    directly as ResearchResponse.answer (str | None) fails Pydantic
+    validation and crashes the endpoint with a 500. Normalize both shapes
+    to a plain string here.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+            elif isinstance(block, str):
+                parts.append(block)
+        return "".join(parts)
+    return str(content)
+
+
 @app.post("/research", response_model=ResearchResponse)
 def research(request: ResearchRequest) -> ResearchResponse:
     thread_id = request.thread_id or str(uuid.uuid4())
@@ -60,7 +82,7 @@ def research(request: ResearchRequest) -> ResearchResponse:
             return ResearchResponse(
                 thread_id=thread_id,
                 status="completed",
-                answer=result["messages"][-1].content,
+                answer=_extract_text_content(result["messages"][-1].content),
             )
     finally:
         reset_identity(identity_token)
@@ -91,10 +113,17 @@ def approve(thread_id: str) -> ResearchResponse:
                 config=config,
             )
 
+            # Step 30 fix: a resume can trigger another pending interrupt
+            # (e.g. a second approval-gated tool call). Re-check state
+            # instead of unconditionally reporting completed.
+            new_state = agent.get_state(config)
+            if new_state.next:
+                return ResearchResponse(thread_id=thread_id, status="paused_for_approval")
+
             return ResearchResponse(
                 thread_id=thread_id,
                 status="completed",
-                answer=result["messages"][-1].content,
+                answer=_extract_text_content(result["messages"][-1].content),
             )
     finally:
         reset_identity(identity_token)
