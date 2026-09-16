@@ -20,6 +20,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from research_copilot.agents.checkpointed_agent import build_agent, CHECKPOINT_DB_PATH
 from research_copilot.observability.otel_setup import setup_otel_instrumentation
+from research_copilot.observability.identity import set_identity, reset_identity
 
 provider = setup_otel_instrumentation()
 
@@ -41,25 +42,28 @@ class ResearchResponse(BaseModel):
 @app.post("/research", response_model=ResearchResponse)
 def research(request: ResearchRequest) -> ResearchResponse:
     thread_id = request.thread_id or str(uuid.uuid4())
+    identity_token = set_identity(session_id=thread_id, environment="dev")
+    try:
+        with SqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
+            agent = build_agent(checkpointer)
+            config = {"configurable": {"thread_id": thread_id}}
 
-    with SqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
-        agent = build_agent(checkpointer)
-        config = {"configurable": {"thread_id": thread_id}}
+            result = agent.invoke(
+                {"messages": [{"role": "user", "content": request.topic}]},
+                config=config,
+            )
 
-        result = agent.invoke(
-            {"messages": [{"role": "user", "content": request.topic}]},
-            config=config,
-        )
+            state = agent.get_state(config)
+            if state.next:
+                return ResearchResponse(thread_id=thread_id, status="paused_for_approval")
 
-        state = agent.get_state(config)
-        if state.next:
-            return ResearchResponse(thread_id=thread_id, status="paused_for_approval")
-
-        return ResearchResponse(
-            thread_id=thread_id,
-            status="completed",
-            answer=result["messages"][-1].content,
-        )
+            return ResearchResponse(
+                thread_id=thread_id,
+                status="completed",
+                answer=result["messages"][-1].content,
+            )
+    finally:
+        reset_identity(identity_token)
 
 
 @app.post("/research/{thread_id}/approve", response_model=ResearchResponse)
@@ -69,27 +73,31 @@ def approve(thread_id: str) -> ResearchResponse:
     Resume shape verified from langchain's HumanInTheLoopMiddleware source:
     Command(resume={"decisions": [{"type": "approve"}]}).
     """
-    with SqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
-        agent = build_agent(checkpointer)
-        config = {"configurable": {"thread_id": thread_id}}
+    identity_token = set_identity(session_id=thread_id, environment="dev")
+    try:
+        with SqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
+            agent = build_agent(checkpointer)
+            config = {"configurable": {"thread_id": thread_id}}
 
-        state = agent.get_state(config)
-        if not state.next:
-            raise HTTPException(
-                status_code=400,
-                detail="No pending approval found on this thread_id.",
+            state = agent.get_state(config)
+            if not state.next:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No pending approval found on this thread_id.",
+                )
+
+            result = agent.invoke(
+                Command(resume={"decisions": [{"type": "approve"}]}),
+                config=config,
             )
 
-        result = agent.invoke(
-            Command(resume={"decisions": [{"type": "approve"}]}),
-            config=config,
-        )
-
-        return ResearchResponse(
-            thread_id=thread_id,
-            status="completed",
-            answer=result["messages"][-1].content,
-        )
+            return ResearchResponse(
+                thread_id=thread_id,
+                status="completed",
+                answer=result["messages"][-1].content,
+            )
+    finally:
+        reset_identity(identity_token)
 
 
 @app.get("/health")
