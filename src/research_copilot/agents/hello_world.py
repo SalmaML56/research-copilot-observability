@@ -15,7 +15,7 @@ from deepagents import create_deep_agent
 from research_copilot.agents.tools import web_search
 from research_copilot.config.settings import settings
 
-settings.validate()  # fail fast if ANTHROPIC_API_KEY is missing
+settings.validate()  # fail fast if MODEL_PROFILE is invalid or its required API key is missing
 
 agent = create_deep_agent(
     model=settings.default_model,
