@@ -36,8 +36,10 @@ Branch: develop
 
 ## Not yet started (per suggested order of attack)
 - Steps 12, 20, 21, 30 — small concrete bugs (NEXT UP)
-  - Step 12: MODEL_PROFILE validation - commit fbcdf08 claims this is fixed,
-    NOT YET independently re-verified with fresh test
+  - Step 12: MODEL_PROFILE validation - VERIFIED. Tested with an invalid
+    profile (raises RuntimeError with clear message) and a valid profile
+    (passes without error). Also fixed a stale comment in hello_world.py
+    that referenced the wrong env var name.
   - Step 20: setup_otel_instrumentation() idempotency - commit fbcdf08 claims
     this is fixed, NOT YET independently re-verified
   - Step 21: OTEL_EXPORTER_OTLP_ENDPOINT load-order bug - not yet checked
