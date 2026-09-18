@@ -34,10 +34,26 @@ class Settings:
             raise RuntimeError("MODEL_PROFILE is 'cheap' but GROQ_API_KEY is not set.")
 
     def get_primary_model(self) -> ChatDeepSeek:
-        return ChatDeepSeek(model=self.primary_model_name, api_key=self.deepseek_api_key, max_tokens=self.max_tokens)
+        # Step 18 fix: without a timeout, a slow/stalled LLM API response
+        # hangs the request forever (confirmed via py-spy: threads stuck in
+        # ssl.recv() with no timeout set, blocking the whole agent run).
+        return ChatDeepSeek(
+            model=self.primary_model_name,
+            api_key=self.deepseek_api_key,
+            max_tokens=self.max_tokens,
+            timeout=90,
+            max_retries=2,
+        )
 
     def get_cheap_model(self) -> ChatGroq:
-        return ChatGroq(model=self.cheap_model_name, api_key=self.groq_api_key, max_tokens=self.max_tokens)
+        # Step 18 fix: same reasoning as get_primary_model() above.
+        return ChatGroq(
+            model=self.cheap_model_name,
+            api_key=self.groq_api_key,
+            max_tokens=self.max_tokens,
+            timeout=90,
+            max_retries=2,
+        )
 
     @property
     def default_model(self) -> ChatDeepSeek | ChatGroq:
