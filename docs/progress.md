@@ -70,7 +70,10 @@ Branch: develop
     before the completed response) - a live two-interrupt scenario was not
     reproduced end-to-end since it depends on unpredictable agent behavior,
     noted here rather than silently claimed as fully live-tested.
-- Step 18 — Run remaining 8/10 dataset prompts, rewrite findings (unblocked by Step 14, not started)
+- Step 18 — DONE. All 10/10 prompts completed (see docs/step18_findings.md).
+  rc-008 and rc-009 required a real code fix (unbounded LLM/search timeouts)
+  before they would complete at all - documented as Finding 1/2. Finding 3
+  covers the lead agent's uncapped self-correction retry loop, now capped.
 - Steps 15, 16, 26 — Langfuse-dependent verification, not started
 - Step 22, 25, 28, 32 — missing demonstrations, not started
 - Documentation corrections (Step 2, Step 5 doc, README Phase 4 claim) — not started
