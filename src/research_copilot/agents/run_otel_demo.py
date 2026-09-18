@@ -18,7 +18,7 @@ from research_copilot.agents.main_agent import agent  # noqa: E402
 
 
 if __name__ == "__main__":
-    task = "What is a small modular nuclear reactor? Answer in 2 short sentences, no research needed."
+    task = "Research the CAP theorem in distributed systems and write a short summary."
     print(f"Task: {task}\n")
 
     result = agent.invoke({"messages": [{"role": "user", "content": task}]})

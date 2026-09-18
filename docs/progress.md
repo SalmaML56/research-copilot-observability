@@ -75,7 +75,9 @@ Branch: develop
   before they would complete at all - documented as Finding 1/2. Finding 3
   covers the lead agent's uncapped self-correction retry loop, now capped.
 - Steps 15, 16, 26 — Langfuse-dependent verification, not started
-- Step 22, 25, 28, 32 — missing demonstrations, not started
+- Step 22 — DONE. Real comparison saved: docs/step22_openllmetry_vs_openinference.md
+  (297 vs 559 spans on identical research task, naming/attribute differences documented)
+- Steps 25, 28, 32 — missing demonstrations, not started
 - Documentation corrections (Step 2, Step 5 doc, README Phase 4 claim) — not started
 - Step 9 — Postgres deferral decision — not started
 
