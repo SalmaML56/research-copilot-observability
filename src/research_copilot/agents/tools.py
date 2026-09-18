@@ -20,11 +20,28 @@ digs into next.
 """
 
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from ddgs import DDGS
 from ddgs.exceptions import DDGSException
 from langchain_core.tools import tool
 from langfuse import get_client, observe
 from opentelemetry import trace
+
+# Step 18 fix (Finding: unbounded search hang): DDGS's own timeout=5 default
+# is NOT reliably enforced in this network environment — observed via py-spy
+# that a search call can block for 5+ minutes with no exception raised,
+# hanging the entire agent run. We enforce our own hard wall-clock timeout
+# on a dedicated thread pool, independent of what DDGS/its HTTP backend do
+# internally.
+_search_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="web_search_hard_timeout")
+# Tightened after live testing in this environment: search engine reachability
+# is unreliable here, so a subagent making several search calls (each with a
+# hard timeout + retries) could accumulate several minutes of wait even though
+# no single call hangs forever. Lower per-call timeout and fewer retries keep
+# worst-case-per-query time low, since we already have a partial-failure
+# fallback message for callers.
+_SEARCH_HARD_TIMEOUT_SECONDS = 8
+_SEARCH_MAX_ATTEMPTS = 2
 
 tracer = trace.get_tracer("research_copilot.tools")
 
@@ -38,13 +55,21 @@ def web_search(query: str, max_results: int = 5) -> str:
     """
     last_error: Exception | None = None
 
-    for attempt in range(3):
+    for attempt in range(_SEARCH_MAX_ATTEMPTS):
         with tracer.start_as_current_span("web_search.ddgs_http_call") as span:
             span.set_attribute("gen_ai.tool.name", "web_search")
             span.set_attribute("web_search.attempt", attempt + 1)
             span.set_attribute("web_search.query", query)
             try:
-                results = DDGS().text(query, max_results=max_results)
+                future = _search_executor.submit(DDGS().text, query, max_results=max_results)
+                try:
+                    results = future.result(timeout=_SEARCH_HARD_TIMEOUT_SECONDS)
+                except FutureTimeoutError as e:
+                    raise DDGSException(
+                        f"Search hard-timed-out after {_SEARCH_HARD_TIMEOUT_SECONDS}s "
+                        f"(DDGS's own timeout was not honored by the network/HTTP backend)"
+                    ) from e
+
                 span.set_attribute("web_search.result_count", len(results) if results else 0)
 
                 if not results:
@@ -62,7 +87,7 @@ def web_search(query: str, max_results: int = 5) -> str:
                 last_error = e
                 span.set_attribute("web_search.failed", True)
                 span.record_exception(e)
-                if attempt < 2:
+                if attempt < _SEARCH_MAX_ATTEMPTS - 1:
                     time.sleep(2 * (attempt + 1))
                     continue
 
