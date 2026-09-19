@@ -83,10 +83,11 @@ Branch: develop
   only the direct-OTel-to-Langfuse comparison script, not the main app path).
 - Step 22 — DONE. Real comparison saved: docs/step22_openllmetry_vs_openinference.md
   (297 vs 559 spans on identical research task, naming/attribute differences documented)
-- Step 19 — LangGraph Studio fresh checkpoint replay. NOTE: this was in
-  the original review action plan but was missed from this tracker until now
-  (discovered while fixing the README during documentation corrections).
-  Not started.
+- Step 19 — DONE. See docs/step19_langgraph_studio_replay.md. Fresh
+  replay from the model checkpoint via Studio Fork action, thread
+  01a0bad5-0dcb-7143-a121-f4505e4d2791. Also removed .langgraph_api/
+  runtime files from git tracking (a related cleanup item from the same
+  action plan step that had also been missed).
 - Step 32 — DONE. See docs/step32_grafana_session_search.md - fresh session
   search confirmed both via Tempo API (20 traces) and visually in Grafana UI.
 - Step 25 — DONE. See docs/step25_context_propagation.md. Repeated with

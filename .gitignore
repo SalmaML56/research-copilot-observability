@@ -11,3 +11,4 @@ data/eval_results/*
 checkpoints.sqlite
 checkpoints.sqlite-shm
 checkpoints.sqlite-wal
+.langgraph_api/
