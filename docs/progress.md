@@ -87,7 +87,9 @@ Branch: develop
   the original review action plan but was missed from this tracker until now
   (discovered while fixing the README during documentation corrections).
   Not started.
-- Steps 25, 28, 32 — missing demonstrations, not started
+- Step 32 — DONE. See docs/step32_grafana_session_search.md - fresh session
+  search confirmed both via Tempo API (20 traces) and visually in Grafana UI.
+- Steps 25, 28 — missing demonstrations, not started
 - Documentation corrections (Step 2, Step 5 doc, README Phase 4 claim) — DONE
 - Step 9 — Postgres deferral decision — not started
 
