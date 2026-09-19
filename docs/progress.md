@@ -74,7 +74,13 @@ Branch: develop
   rc-008 and rc-009 required a real code fix (unbounded LLM/search timeouts)
   before they would complete at all - documented as Finding 1/2. Finding 3
   covers the lead agent's uncapped self-correction retry loop, now capped.
-- Steps 15, 16, 26 — Langfuse-dependent verification, not started
+- Steps 15, 16 — DONE (Langfuse delegation trace + session grouping verified).
+- Step 26 — DONE. See docs/step26_langfuse_otel_comparison.md. Found a real
+  gap: our IdentitySpanProcessor sets a generic session_id attribute that
+  works for Grafana Tempo but is silently ignored by Langfuse'''s OTLP
+  ingestion (which needs session.id/user.id or langfuse.session.id/
+  langfuse.user.id specifically). Flagged as follow-up, not fixed (affects
+  only the direct-OTel-to-Langfuse comparison script, not the main app path).
 - Step 22 — DONE. Real comparison saved: docs/step22_openllmetry_vs_openinference.md
   (297 vs 559 spans on identical research task, naming/attribute differences documented)
 - Step 19 — LangGraph Studio fresh checkpoint replay. NOTE: this was in
