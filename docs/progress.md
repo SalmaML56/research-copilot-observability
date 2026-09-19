@@ -101,7 +101,10 @@ Branch: develop
   usage/cost, Langfuse (direct OTel path) shows None for the same span -
   flagged as follow-up, not fixed.
 - Documentation corrections (Step 2, Step 5 doc, README Phase 4 claim) — DONE
-- Step 9 — Postgres deferral decision — not started
+- Step 9 — DONE. See docs/step9_postgres_deferral_decision.md. Deferral
+  to Phase 7 explicitly documented and justified (Phase 7/Step 46 in the
+  original brief already places Postgres checkpointing there) - decision
+  is now written down instead of only implicit.
 
 ## Blockers / open decisions
 - Commit fbcdf08 (already on develop before this review cycle) claims to address
