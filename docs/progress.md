@@ -94,7 +94,11 @@ Branch: develop
   IDs differ when broken and match when fixed. Also corrected a false
   claim that asyncio.create_task needed manual context-copying like
   threading.Thread does (it never did - automatic since Python 3.7).
-- Step 28 — missing demonstration, not started
+- Step 28 — DONE. See docs/step28_same_run_comparison.md. Same trace ID
+  (3afbd592...) confirmed in both Phoenix and Langfuse from one single
+  invocation. Found a real gap: Phoenix shows full model-span token
+  usage/cost, Langfuse (direct OTel path) shows None for the same span -
+  flagged as follow-up, not fixed.
 - Documentation corrections (Step 2, Step 5 doc, README Phase 4 claim) — DONE
 - Step 9 — Postgres deferral decision — not started
 
