@@ -89,7 +89,12 @@ Branch: develop
   Not started.
 - Step 32 — DONE. See docs/step32_grafana_session_search.md - fresh session
   search confirmed both via Tempo API (20 traces) and visually in Grafana UI.
-- Steps 25, 28 — missing demonstrations, not started
+- Step 25 — DONE. See docs/step25_context_propagation.md. Repeated with
+  real researcher subagent (stub model, no API calls), verified real trace
+  IDs differ when broken and match when fixed. Also corrected a false
+  claim that asyncio.create_task needed manual context-copying like
+  threading.Thread does (it never did - automatic since Python 3.7).
+- Step 28 — missing demonstration, not started
 - Documentation corrections (Step 2, Step 5 doc, README Phase 4 claim) — DONE
 - Step 9 — Postgres deferral decision — not started
 
