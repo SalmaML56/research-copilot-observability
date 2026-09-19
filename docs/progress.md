@@ -77,8 +77,12 @@ Branch: develop
 - Steps 15, 16, 26 — Langfuse-dependent verification, not started
 - Step 22 — DONE. Real comparison saved: docs/step22_openllmetry_vs_openinference.md
   (297 vs 559 spans on identical research task, naming/attribute differences documented)
+- Step 19 — LangGraph Studio fresh checkpoint replay. NOTE: this was in
+  the original review action plan but was missed from this tracker until now
+  (discovered while fixing the README during documentation corrections).
+  Not started.
 - Steps 25, 28, 32 — missing demonstrations, not started
-- Documentation corrections (Step 2, Step 5 doc, README Phase 4 claim) — not started
+- Documentation corrections (Step 2, Step 5 doc, README Phase 4 claim) — DONE
 - Step 9 — Postgres deferral decision — not started
 
 ## Blockers / open decisions

@@ -14,7 +14,7 @@ Every span in this project SHOULD carry these attributes:
 
 **Previous version of this doc incorrectly claimed** a Collector processor
 (from Phase 3, step 23) enforces these fields on every span. That was
-false — Ali verified 71 real spans and found none of the five fields.
+false — a review of 71 real spans found none of the five fields present.
 The Collector's `gen_ai_normalizer` processor only **renames** existing
 attributes (e.g. `gen_ai.system` → `gen_ai.provider.name`); it does not
 add new ones.
