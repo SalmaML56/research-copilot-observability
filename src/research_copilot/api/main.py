@@ -21,8 +21,13 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from research_copilot.agents.checkpointed_agent import build_agent, CHECKPOINT_DB_PATH
 from research_copilot.observability.otel_setup import setup_otel_instrumentation
 from research_copilot.observability.identity import set_identity, reset_identity
+from research_copilot.observability.metrics_setup import (
+    setup_metrics_instrumentation,
+    GenAIMetricsCallbackHandler,
+)
 
 provider = setup_otel_instrumentation()
+setup_metrics_instrumentation()
 
 app = FastAPI(title="Research Copilot API")
 FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
@@ -70,6 +75,7 @@ def research(request: ResearchRequest) -> ResearchResponse:
             agent = build_agent(checkpointer)
             config = {"configurable": {"thread_id": thread_id}}
 
+            config["callbacks"] = [GenAIMetricsCallbackHandler()]
             result = agent.invoke(
                 {"messages": [{"role": "user", "content": request.topic}]},
                 config=config,
@@ -108,6 +114,7 @@ def approve(thread_id: str) -> ResearchResponse:
                     detail="No pending approval found on this thread_id.",
                 )
 
+            config["callbacks"] = [GenAIMetricsCallbackHandler()]
             result = agent.invoke(
                 Command(resume={"decisions": [{"type": "approve"}]}),
                 config=config,
