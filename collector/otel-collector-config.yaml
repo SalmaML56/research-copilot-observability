@@ -26,3 +26,6 @@ service:
       receivers: [otlp]
       processors: [gen_ai_normalizer]
       exporters: [debug, otlphttp/grafana]
+    metrics:
+      receivers: [otlp]
+      exporters: [debug, otlphttp/grafana]
