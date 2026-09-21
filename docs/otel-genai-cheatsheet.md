@@ -51,4 +51,5 @@ Not done in this pass — flagged here rather than assumed already handled.
 | user_id | Who triggered the run |
 | prompt_version | Which prompt template version |
 | environment | dev / staging / prod |
-| cost_usd | tokens x price (not yet implemented — see Step 34) |
+| gen_ai.usage.cost_usd | tokens x price, set per model-call span by the Collector's `transform/cost` processor (Step 34). Rates and as-of date: `docs/step34_cost_model.md`. |
+| gen_ai.usage.cost_model | the model name the price was looked up under, or `unpriced` when no rate matched |

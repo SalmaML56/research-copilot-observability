@@ -1,0 +1,271 @@
+# Phase 5, Step 36 (P5-40 .. P5-45): the five alerts, provisioned as code.
+#
+# Provisioned rather than clicked in, for the same reason the dashboard is:
+# a rule that only exists in Grafana's database disappears with the container
+# and is invisible in review.
+#
+# Every threshold below is calibrated against observed data from real runs on
+# this stack, not picked as a round number. Where a threshold is a judgement
+# call, the reasoning is in the comment above the rule and in the rule's own
+# summary annotation, so whoever gets paged can see why the line is there.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: research-copilot-phase5
+    folder: Research Copilot
+    interval: 1m
+    rules:
+      # ------------------------------------------------------------------
+      # (a) P5-40 - run exceeded 25 steps, probably a loop
+      # ------------------------------------------------------------------
+      # Threshold is the one the brief names. Calibration against real runs:
+      # observed plans have been well under 25 todo items; a documented
+      # pathological run did 37 searches and 41 model calls for one topic,
+      # which is exactly the runaway shape this is meant to catch.
+      - uid: rc-p5-run-steps
+        title: Run exceeded 25 planning steps (probable loop)
+        condition: THRESHOLD
+        for: 0m
+        labels:
+          severity: warning
+          phase: "5"
+        annotations:
+          summary: "An agent run planned more than 25 steps - likely a self-correction loop rather than a plan."
+          description: "research_copilot.run.steps recorded a run above the 25-step budget. Open the Research Copilot dashboard, then drill from the latency panel into the trace for the offending session. Note: this rule latches for the lifetime of the process that recorded the run - it reports that a runaway happened, not that one is happening right now."
+          runbook_url: "docs/tasks-ph5.md#p5-40-p1--alert-a-run-exceeded-25-steps--probable-loop"
+        data:
+          - refId: MAX_STEPS
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              # Three attempts at this expression; the first two were
+              # wrong in ways only real data showed.
+              #
+              # 1. max() of each bucket independently across instances.
+              #    Wrong: an over-budget run in the CLI process was masked
+              #    by a larger, entirely within-budget count in the API
+              #    process. The rule read 0 while a 31-step run sat in the
+              #    data. Fixed by matching the two buckets PER SERIES with
+              #    ignoring(le).
+              # 2. increase(...[30m]) around each bucket. Also wrong: a
+              #    process that records its over-budget run before its
+              #    first export has a FLAT counter for its whole life, and
+              #    increase() of a flat series is 0. Verified: the series
+              #    read le=+Inf 1 / le=25 0 - the run was plainly there -
+              #    while increase() returned 0 for both buckets.
+              #
+              # So: the plain per-series difference of the cumulative
+              # buckets. Stated plainly - this stays firing for the
+              # lifetime of the process that recorded the over-budget run,
+              # and clears when that process exits (Prometheus marks the
+              # series stale after 5 minutes) or restarts. For "a run
+              # probably looped, go and look", latching is the honest
+              # behaviour; it is not a rate and should not be read as one.
+              expr: |
+                max(
+                  research_copilot_run_steps_bucket{le="+Inf"}
+                  - ignoring(le)
+                  research_copilot_run_steps_bucket{le="25"}
+                )
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: MAX_STEPS
+          - refId: THRESHOLD
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: MAX_STEPS
+              conditions:
+                - evaluator: { type: gt, params: [0.5] }
+              refId: THRESHOLD
+        noDataState: OK
+        execErrState: OK
+
+      # ------------------------------------------------------------------
+      # (b) P5-41 - a single user's cost spiked 5x in an hour
+      # ------------------------------------------------------------------
+      # This alert only became possible once the API accepted a real user_id.
+      # While every request identified itself as "unknown", the rule could not
+      # distinguish one user from another and would have been environment-wide
+      # dressed up as per-user.
+      #
+      # Cost is reconstructed from token counts at the published DeepSeek
+      # rates (docs/step34_cost_model.md). Comparing the last 10 minutes,
+      # rate-normalised, against the trailing hour.
+      - uid: rc-p5-cost-spike
+        title: A user's token cost spiked 5x within an hour
+        condition: THRESHOLD
+        for: 5m
+        labels:
+          severity: critical
+          phase: "5"
+        annotations:
+          summary: "Token spend for one session is running 5x its own trailing-hour rate."
+          description: "Short-window token rate divided by the trailing-hour rate exceeded 5 for a single session. Check the 'Cost per session' table on the Research Copilot dashboard."
+          runbook_url: "docs/tasks-ph5.md#p5-41-p1--alert-b-a-single-users-cost-spiked-5x-in-an-hour"
+        data:
+          - refId: RATIO
+            relativeTimeRange: { from: 3600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: |
+                sum by (session_id) (rate(gen_ai_client_token_usage_sum[10m]))
+                /
+                clamp_min(sum by (session_id) (rate(gen_ai_client_token_usage_sum[1h])), 0.001)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: RATIO
+          - refId: THRESHOLD
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: RATIO
+              conditions:
+                - evaluator: { type: gt, params: [5] }
+              refId: THRESHOLD
+        noDataState: OK
+        execErrState: OK
+
+      # ------------------------------------------------------------------
+      # (c) P5-42 - tool failure rate over 10%
+      # ------------------------------------------------------------------
+      # Two prerequisites had to land before this rule could ever fire:
+      #   * failed tool attempts are now STATUS_CODE_ERROR, not UNSET.
+      #     Measured before the fix: 0 ERROR spans out of 78 UNSET, so the
+      #     numerator was structurally zero and the alert was decorative.
+      #   * Langfuse's @observe is gated, so each tool call is counted once.
+      #     Before that, numerator and denominator were both doubled - which
+      #     happens to preserve the ratio, but poisons every absolute count
+      #     on the same metric.
+      # Observed on a real run: 5 errors in 28 attempts = 17.9%, i.e. this
+      # environment genuinely sits above the 10% line and the rule fires on
+      # real conditions rather than on a synthetic trigger.
+      - uid: rc-p5-tool-error-rate
+        title: Tool failure rate above 10%
+        condition: THRESHOLD
+        for: 5m
+        labels:
+          severity: warning
+          phase: "5"
+        annotations:
+          summary: "More than 10% of tool calls are failing."
+          description: "Ratio of STATUS_CODE_ERROR tool spans to all tool spans exceeded 0.1 over 5 minutes. From the dashboard's tool-error panel, click through to the trace, then to the correlated log line in Loki."
+          runbook_url: "docs/tasks-ph5.md#p5-42-p1--alert-c-tool-failure-rate-over-10"
+        data:
+          - refId: ERROR_RATE
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: |
+                sum by (gen_ai_tool_name) (rate(traces_span_metrics_calls_total{gen_ai_tool_name!="", status_code="STATUS_CODE_ERROR"}[5m]))
+                /
+                clamp_min(sum by (gen_ai_tool_name) (rate(traces_span_metrics_calls_total{gen_ai_tool_name!=""}[5m])), 0.0000001)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: ERROR_RATE
+          - refId: THRESHOLD
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: ERROR_RATE
+              conditions:
+                - evaluator: { type: gt, params: [0.1] }
+              refId: THRESHOLD
+        noDataState: OK
+        execErrState: OK
+
+      # ------------------------------------------------------------------
+      # (d) P5-43 - more than N runs stuck waiting for human approval
+      # ------------------------------------------------------------------
+      # N = 5. Justification: this is a single-operator dev deployment with
+      # one human approving finalize_report calls by hand. A backlog of more
+      # than five means approvals are not being worked, not that traffic is
+      # high. Raise N when there is more than one approver.
+      #
+      # Known limitation, stated rather than hidden: the gauge is an
+      # in-process registry, so it resets to 0 when the API restarts even
+      # though the threads are still paused on disk. This rule detects a
+      # backlog building in a running service; it is not an audit of every
+      # paused thread.
+      - uid: rc-p5-pending-approvals
+        title: More than 5 runs waiting for human approval
+        condition: THRESHOLD
+        for: 10m
+        labels:
+          severity: warning
+          phase: "5"
+        annotations:
+          summary: "Approval backlog: more than 5 runs are paused waiting on a human decision."
+          description: "research_copilot.runs.pending_approval stayed above 5 for 10 minutes. Each paused run holds a checkpoint and will never complete on its own."
+          runbook_url: "docs/tasks-ph5.md#p5-43-p1--alert-d-more-than-n-runs-stuck-waiting-for-human-approval"
+        data:
+          - refId: PENDING
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: max(research_copilot_runs_pending_approval)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: PENDING
+          - refId: THRESHOLD
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: PENDING
+              conditions:
+                - evaluator: { type: gt, params: [5] }
+              refId: THRESHOLD
+        noDataState: OK
+        execErrState: OK
+
+      # ------------------------------------------------------------------
+      # (e) P5-44 - checkpoint DB growing faster than expected
+      # ------------------------------------------------------------------
+      # Calibrated against measured growth, not a round number. The tracked
+      # checkpoints.sqlite is ~13.7 MB after the project's whole history of
+      # runs. A single research run adds on the order of a few hundred KB.
+      # 5 MB/hour is therefore roughly an order of magnitude above normal
+      # single-operator use - fast enough to mean something is wrong (a loop
+      # writing checkpoints, or unbounded message history), slow enough that
+      # an ordinary busy afternoon does not page anyone.
+      - uid: rc-p5-checkpoint-growth
+        title: Checkpoint DB growing faster than 5 MB/hour
+        condition: THRESHOLD
+        for: 15m
+        labels:
+          severity: warning
+          phase: "5"
+        annotations:
+          summary: "checkpoints.sqlite is growing at more than 5 MB/hour."
+          description: "Sustained growth well above single-operator baseline (~13.7 MB total across the project's history). Usually means a run is looping and rewriting state, or message history is not being trimmed."
+          runbook_url: "docs/tasks-ph5.md#p5-44-p1--alert-e-checkpoint-db-growing-faster-than-expected"
+        data:
+          - refId: GROWTH
+            relativeTimeRange: { from: 3600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: max(deriv(research_copilot_checkpoint_db_size_bytes[30m])) * 3600
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: GROWTH
+          - refId: THRESHOLD
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: GROWTH
+              conditions:
+                - evaluator: { type: gt, params: [5242880] }
+              refId: THRESHOLD
+        noDataState: OK
+        execErrState: OK

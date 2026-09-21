@@ -19,23 +19,59 @@ fully complete.
 |---|---|---|
 | 0 | Folder structure, OTel Collector, trace docs | Done |
 | 1 | Multi-agent core, checkpointer, human-in-the-loop, streaming, dual model profiles, eval dataset | Mostly done — Postgres checkpointing (Step 9) deferred, see docs/progress.md |
-| 2 | Langfuse tracing | Mostly done — LangGraph Studio fresh checkpoint replay (Step 19) not yet done |
-| 3 | OpenTelemetry migration (OpenInference/OpenLLMetry, manual spans, context propagation) | Mostly done — subagent-based context propagation demo (Step 25) and post-fix Langfuse/OTel comparison (Step 26) not yet done |
-| 4 | Arize Phoenix, FastAPI endpoint, Grafana/Tempo/Prometheus/Loki | Mostly done — same-run Langfuse vs Phoenix comparison (Step 28) and fresh Grafana session search (Step 32) not yet done |
-| 5 | Metrics dashboards + alerts | Not started |
+| 2 | Langfuse tracing | Mostly done — Step 19 replay done; Langfuse is now auto-provisioned on first start (see Setup) |
+| 3 | OpenTelemetry migration (OpenInference/OpenLLMetry, manual spans, context propagation) | Mostly done — Steps 25 and 26 done; Langfuse double-export closed in Phase 5 |
+| 4 | Arize Phoenix, FastAPI endpoint, Grafana/Tempo/Prometheus/Loki | Done — Steps 28 and 32 done; the Collector now carries traces, metrics and logs |
+| 5 | Metrics dashboards + alerts | Done — start with [the Phase 5 guide](docs/phase5_evidence/README.md) |
 | 6 | Evaluation framework | Not started |
 | 7 | Production hardening | Not started |
 | 8 | CI/CD | Not started |
 
 ## Setup
 
+For the full setup, API approval workflow, observability checks, and a verification checklist for every step in `obs-mon.md` and `review.md`, follow [get-started.md](get-started.md).
+
 ```bash
-cp .env.example .env
+cp .env.example .env     # fill in DEEPSEEK_API_KEY / GROQ_API_KEY
 uv sync
-docker compose up -d otel-collector
+docker compose up -d     # 9 containers: Collector, LGTM, Phoenix, Langfuse + its 4 deps
 ```
 
+Langfuse provisions its own organization, project, user and API keys on
+first start from the `LANGFUSE_INIT_*` values in `.env`, and `.env` uses
+those same keys — so a fresh clone works without anyone creating a project
+by hand. (Before this, a fresh clone got `401 Unauthorized` on every span
+export and nothing in the repo said why.)
+
+### Tracing backend switch
+
+`TRACING_BACKEND` decides which pipeline records tool calls:
+
+| Value | Effect |
+|---|---|
+| `otel` (default) | OpenInference/OTel only. Langfuse's `@observe` is a no-op. |
+| `langfuse` | Langfuse decorators active — for the Phase 2 demos. |
+| `both` | Both. Accepts 2x tool spans; only for the Step 26/28 comparisons. |
+
+This exists because Langfuse v4 attaches its own span processor to the
+global TracerProvider, so an ungated `@observe` exported every tool call
+twice — 74 `web_search` spans for 37 real HTTP calls — which made every
+Phase 5 tool panel and the tool-error alert exactly 2x wrong.
+
 ## Running things
+
+### Dashboards and alerts
+
+```bash
+docker compose up -d
+# Grafana        http://localhost:3001   (dashboard: "Research Copilot — Phase 5")
+# Langfuse       http://localhost:3000
+# Phoenix        http://localhost:6006
+```
+
+The dashboard (`grafana/dashboards/`) and the five alert rules
+(`grafana/provisioning/alerting/`) are provisioned from git, not clicked in,
+and LGTM now has persistent volumes — both survive `docker compose down`.
 
 ```bash
 # Plain agent
