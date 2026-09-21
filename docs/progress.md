@@ -7,7 +7,9 @@ Branch: phase-5/metrics-dashboards-alerts
 ## Phase 5 — Metrics, dashboards, alerts — DONE (2026-09-21)
 
 Full task list with per-task status: `docs/tasks-ph5.md`.
-Evidence (trace IDs, queries, 8 screenshots): `docs/phase5_evidence/README.md`.
+Short guide: `docs/phase5_evidence/README.md`.
+Evidence (trace IDs, queries, 8 screenshots):
+`docs/phase5_evidence/verification-details.md`.
 
 Verified against the running stack — 9 containers, two real DeepSeek runs,
 one taken all the way through `POST /research` → pause → `approve` →

@@ -22,7 +22,7 @@ fully complete.
 | 2 | Langfuse tracing | Mostly done — Step 19 replay done; Langfuse is now auto-provisioned on first start (see Setup) |
 | 3 | OpenTelemetry migration (OpenInference/OpenLLMetry, manual spans, context propagation) | Mostly done — Steps 25 and 26 done; Langfuse double-export closed in Phase 5 |
 | 4 | Arize Phoenix, FastAPI endpoint, Grafana/Tempo/Prometheus/Loki | Done — Steps 28 and 32 done; the Collector now carries traces, metrics and logs |
-| 5 | Metrics dashboards + alerts | Done — see `docs/tasks-ph5.md` and `docs/phase5_evidence/` |
+| 5 | Metrics dashboards + alerts | Done — start with [the Phase 5 guide](docs/phase5_evidence/README.md) |
 | 6 | Evaluation framework | Not started |
 | 7 | Production hardening | Not started |
 | 8 | CI/CD | Not started |

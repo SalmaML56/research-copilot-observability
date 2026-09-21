@@ -15,8 +15,9 @@ Every task below was implemented and then checked against the running
 stack — 9 containers up, two real DeepSeek runs, one of them taken all the
 way through `POST /research` → pause → `approve` → completed.
 
+Start here: **`docs/phase5_evidence/README.md`** (short guide).
 Evidence, with trace IDs, queries and screenshots:
-**`docs/phase5_evidence/README.md`**.
+**`docs/phase5_evidence/verification-details.md`**.
 
 | Task | Status | Verified by |
 |---|---|---|
