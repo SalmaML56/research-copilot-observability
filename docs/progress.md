@@ -1,8 +1,107 @@
 # docs/progress.md
 
 ## Current phase and branch
-Phase: Review action plan — post-Phase-4 fixes
-Branch: develop
+Phase: 5 — Metrics, dashboards, alerts (DONE, 2026-09-21)
+Branch: phase-5/metrics-dashboards-alerts
+
+## Phase 5 — Metrics, dashboards, alerts — DONE (2026-09-21)
+
+Full task list with per-task status: `docs/tasks-ph5.md`.
+Short guide: `docs/phase5_evidence/README.md`.
+Evidence (trace IDs, queries, 8 screenshots):
+`docs/phase5_evidence/verification-details.md`.
+
+Verified against the running stack — 9 containers, two real DeepSeek runs,
+one taken all the way through `POST /research` → pause → `approve` →
+completed (1641-char answer).
+
+- Step 33 — token and duration metrics. **The brief's premise was wrong for
+  this stack**: `openinference-instrumentation-langchain` emits traces only,
+  never metrics, so neither `gen_ai.client.token.usage` nor
+  `gen_ai.client.operation.duration` existed anywhere. They are now produced
+  deliberately by `GenAIMetricsCallbackHandler`, and both are queryable in
+  Prometheus. Written up in `docs/step33_metrics_verification.md`.
+
+- Step 34 — cost. Computed in the Collector per model-call span, as
+  `gen_ai.usage.cost_usd`. Model-aware (4 models; unknown models marked
+  `unpriced`, never $0). Rates, sources and as-of date:
+  `docs/step34_cost_model.md`. Arithmetic checked by hand against a live
+  span — exact to 8 decimal places. Never copied onto parent spans: 26 cost
+  spans = 26 token spans = 26 model spans on the verification trace.
+
+- Step 35 — one dashboard, provisioned from git, 9 panels, all showing real
+  data. Survives container recreation.
+
+- Step 36 — five alert rules, provisioned as YAML. One
+  (**cost spiked 5x**) observed in the `Firing` state on real traffic, not a
+  synthetic trigger.
+
+- Step 37 — structured JSON logs with trace context. The codebase had no
+  `logging` usage at all before this. Logs reach Loki via a new Collector
+  logs pipeline, and correlation was clicked through **in both directions**
+  in the browser: Loki log line → its trace in Tempo, and Tempo span →
+  "Explore the logs for this in split view" → 19 matching log lines.
+
+### Pre-existing bugs that had to be fixed before any Phase 5 number was trustworthy
+
+- **Span attribute limit** (review v2, Addendum C). The SDK default of 128
+  attributes/span was overflowing on long-context model spans, and the SDK
+  evicts the *oldest* attributes first — so identity was the first thing
+  discarded, on exactly the most expensive calls. `SpanLimits(
+  max_span_attributes=2048)`. After: 0 spans with dropped attributes on a
+  202-span run, 199/202 carrying `session_id`.
+
+- **Langfuse `@observe` double-export** (review v2, Step 17 / Addendum D).
+  Every tool call was exported twice — 74 `web_search` spans for 37 real
+  HTTP calls, plus 224 stray `langfuse.*` attributes in Tempo. Now gated
+  behind `TRACING_BACKEND` (default `otel`). After: 0 `langfuse.*`
+  attributes, one span per tool call. Every tool panel and the tool-error
+  alert were 2x wrong until this landed.
+
+- **Span status** (review v2, Step 24). Failed tool attempts were `UNSET`,
+  never `ERROR` — 0 ERROR spans out of 78 UNSET. A tool-failure-rate alert
+  on that data would have read 0% forever. Now 5 ERROR / 23 OK on a real
+  run; the real rate in this environment is 17.9%.
+
+- **FastAPI root span identity** (review v2, Steps 5/24/30). Now stamped
+  directly on the still-open root span in the handler. Still not covered:
+  the 3 ASGI `http send`/`http receive` sub-spans, which are framework
+  plumbing created outside the handler body — stated, not hidden.
+
+- **`user_id` hardcoded `"unknown"`** (review v2, Step 24). The API now
+  accepts a `user_id`, which is what makes the per-user cost alert
+  meaningful rather than environment-wide dressed up as per-user.
+
+- **Langfuse not reproducible** (review v2, Addendum A). `LANGFUSE_INIT_*`
+  now provisions an org, project, user and API keys on first start, sourced
+  from `.env` so the app's keys and Langfuse's keys cannot drift apart.
+  Verified by API auth and by signing into the UI.
+
+- **`grafana-lgtm` had no volume at all.** Every dashboard, alert rule and
+  stored trace was lost on restart. Now four named volumes; verified by
+  removing and recreating the container.
+
+- **`.env` load order in `otel_setup.py`** (review v2, Step 21) and the
+  checkpoint-DB gauge's relative path — both fixed.
+
+### Found only by querying the backends (not predicted by the plan)
+
+1. OTel unit `"1"` becomes a `_ratio` suffix in Prometheus, so
+   `research_copilot.runs.pending_approval` arrived as
+   `..._pending_approval_ratio`. Fixed with annotation units.
+2. The token metric was labelled with the *configured* model name
+   (`deepseek-chat`) while the cost attribute was keyed on the
+   *provider-reported* one (`deepseek-flash`). Any panel joining them would
+   have matched nothing. Fixed by reading the name off the response.
+3. `spanmetrics` → `span_metrics` and `otlphttp` → `otlp_http` are
+   deprecated aliases in Collector 0.159.0.
+4. A single-file bind mount is unsafe on Docker Desktop for Windows — a
+   missing host file becomes a *directory* and every later start fails.
+5. `LANGFUSE_INIT_USER_EMAIL` rejects `dev@localhost`; langfuse-web refuses
+   to start at all.
+6. Prometheus staleness (5 min) meant the cost-per-session panel silently
+   forgot every older session until it was rewritten with
+   `max_over_time(...[$__range])`.
 
 ## Steps status
 
@@ -111,5 +210,6 @@ Branch: develop
   MODEL_PROFILE validation and idempotent otel setup, among other things.
   These specific claims (Step 12, Step 20) still need fresh independent
   verification before being trusted or marked done - this is next up.
-- FastAPI root-span identity gap (see Steps 5/24 above) needs a decision:
-  fix now via middleware, or document as accepted limitation for this phase.
+- FastAPI root-span identity gap (see Steps 5/24 above) — RESOLVED in
+  Phase 5. Fixed in the handler rather than in middleware; the remaining
+  ASGI send/receive sub-spans are documented as an accepted limitation.

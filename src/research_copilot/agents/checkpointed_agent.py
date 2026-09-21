@@ -19,6 +19,12 @@ from langchain.agents.middleware import TodoListMiddleware
 from research_copilot.agents.subagents import researcher, writer, LEAD_AGENT_SYSTEM_PROMPT
 from research_copilot.agents.tools import finalize_report
 from research_copilot.config.settings import settings
+from research_copilot.observability.metrics_setup import (
+    setup_metrics_instrumentation,
+    record_run_steps,
+    flush_metrics,
+)
+from research_copilot.observability.logging_setup import setup_logging, flush_logs
 
 settings.validate()
 
@@ -39,6 +45,13 @@ def build_agent(checkpointer):
 
 
 def main() -> None:
+    # Phase 5, P5-26: the CLI path emits metrics and logs too, so a run
+    # started from a terminal shows up on the same dashboards as one served
+    # over HTTP. Short-lived process, so both are force-flushed at the end -
+    # the 5s periodic export would otherwise never fire.
+    setup_metrics_instrumentation()
+    setup_logging()
+
     if len(sys.argv) < 2:
         print('Usage: uv run python -m research_copilot.agents.checkpointed_agent "your task"')
         sys.exit(1)
@@ -55,6 +68,8 @@ def main() -> None:
             config=config,
         )
 
+        record_run_steps(len(result.get("todos") or []))
+
         state = agent.get_state(config)
         if state.next:
             print("=== PAUSED — awaiting human approval ===")
@@ -65,4 +80,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        # Short-lived process: without an explicit flush the 5s periodic
+        # metric export and the batched log export never fire, and the run
+        # is invisible on every dashboard.
+        flush_metrics()
+        flush_logs()

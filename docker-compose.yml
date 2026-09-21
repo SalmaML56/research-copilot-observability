@@ -11,7 +11,7 @@ services:
     mem_limit: 512m
 
   phoenix:
-    image: arizephoenix/phoenix:latest
+    image: arizephoenix/phoenix:20.14.0
     container_name: phoenix
     ports:
       - "6006:6006"
@@ -21,10 +21,28 @@ services:
     mem_limit: 768m
 
   grafana-lgtm:
-    image: grafana/otel-lgtm
+    image: grafana/otel-lgtm:0.11.15
     container_name: grafana-lgtm
     ports:
       - "3001:3000"
+    volumes:
+      # Phase 5, P5-04: without these, Grafana dashboards, alert rules and
+      # alert state - plus every stored trace and metric used as Phase 5
+      # evidence - are lost on `docker compose restart`. Paths come from the
+      # image's own run-*.sh scripts (GF_PATHS_HOME=/data/grafana,
+      # --storage.tsdb.path=/data/prometheus, loki path_prefix=/data/loki,
+      # tempo blocks=/data/tempo).
+      - lgtm_grafana_data:/data/grafana
+      - lgtm_prometheus_data:/data/prometheus
+      - lgtm_loki_data:/data/loki
+      - lgtm_tempo_data:/data/tempo
+      # Provisioned-as-code. Mounted as single files / an empty image dir so
+      # the image's own RED-metrics dashboards and its Prometheus/Tempo/Loki
+      # datasource wiring (which already includes tracesToLogsV2 and the
+      # Loki trace_id derived field) are left intact.
+      - ./grafana/provisioning/dashboards:/otel-lgtm/grafana/conf/provisioning/dashboards:ro
+      - ./grafana/provisioning/alerting:/otel-lgtm/grafana/conf/provisioning/alerting:ro
+      - ./grafana/dashboards:/etc/grafana/provisioned-dashboards:ro
     mem_limit: 1536m
 
   postgres:
@@ -177,17 +195,29 @@ services:
       NEXTAUTH_SECRET: mysecret
       LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://localhost:9090
       LANGFUSE_S3_MEDIA_UPLOAD_INTERNAL_ENDPOINT: http://minio:9000
-      LANGFUSE_INIT_ORG_ID: ""
-      LANGFUSE_INIT_ORG_NAME: ""
-      LANGFUSE_INIT_PROJECT_ID: ""
-      LANGFUSE_INIT_PROJECT_NAME: ""
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ""
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: ""
-      LANGFUSE_INIT_USER_EMAIL: ""
-      LANGFUSE_INIT_USER_NAME: ""
-      LANGFUSE_INIT_USER_PASSWORD: ""
+      # Phase 5, P5-03 (review v2, Addendum A): without these, a fresh
+      # volume yields 0 projects and 0 API keys, and every span export
+      # fails with 401 Unauthorized. Sourced from .env so the keys the app
+      # uses and the keys Langfuse creates cannot drift apart.
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD}
 
 volumes:
+  lgtm_grafana_data:
+    driver: local
+  lgtm_prometheus_data:
+    driver: local
+  lgtm_loki_data:
+    driver: local
+  lgtm_tempo_data:
+    driver: local
   langfuse_postgres_data:
     driver: local
   langfuse_redis_data:
