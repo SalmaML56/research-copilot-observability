@@ -6,6 +6,35 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
+connectors:
+  # Phase 5, P5-13 (Step 35): derives RED-style metrics from spans so the
+  # dashboard can show p50/p95 per agent/subagent and a tool error rate
+  # without every panel having to scan raw traces.
+  #
+  # Dimension choice is deliberate. session_id is intentionally NOT a
+  # dimension: it is unbounded (one value per request), and adding it here
+  # would multiply every series by the number of sessions ever seen. Per
+  # session figures are read from traces instead, via the exemplar /
+  # trace-to-metrics drilldown Grafana already wires up. user_id and
+  # gen_ai.request.model are bounded and are kept.
+  span_metrics:
+    histogram:
+      explicit:
+        buckets: [100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s, 60s, 120s]
+    dimensions:
+      - name: gen_ai.tool.name
+      - name: gen_ai.request.model
+      - name: gen_ai.operation.name
+      - name: user_id
+      - name: environment
+      - name: prompt_version
+    exclude_dimensions: []
+    metrics_flush_interval: 15s
+    # Records which span produced each datapoint, so a spike in a panel
+    # links straight back to the trace that caused it.
+    exemplars:
+      enabled: true
+
 processors:
   gen_ai_normalizer:
     sources:
@@ -14,18 +43,81 @@ processors:
       - name: openllmetry
         remove_originals: true
 
+  # Phase 5, P5-20/P5-21/P5-22 (Step 34): per-model-call cost in USD.
+  #
+  # P5-22: the statements below only ever match spans that themselves carry
+  # gen_ai.usage.input_tokens - i.e. the individual model-call span. Cost is
+  # never copied onto a parent, because summing cost_usd across a trace
+  # would then double-count.
+  #
+  # P5-21: each model gets its own rate. The previous version of this
+  # processor hardcoded DeepSeek rates with no model condition, which priced
+  # Groq runs at DeepSeek rates and would have silently invalidated the
+  # Step 42 frontier-vs-open-weight A/B.
+  #
+  # Gotcha (review v2, Addendum E): a live trace showed
+  # gen_ai.request.model = "deepseek-flash" while .env asked for
+  # "deepseek-chat". The table is keyed on the string that actually appears
+  # on spans, and covers both aliases.
+  #
+  # Rates: see docs/step34_cost_model.md for source and as-of date.
+  transform/cost:
+    error_mode: ignore
+    trace_statements:
+      # --- DeepSeek (deepseek-chat / deepseek-flash / deepseek-reasoner) ---
+      - context: span
+        statements:
+          - set(attributes["gen_ai.usage.cost_usd"],
+              (Double(attributes["gen_ai.usage.input_tokens"]) * 0.00000027) +
+              (Double(attributes["gen_ai.usage.output_tokens"]) * 0.0000011))
+            where attributes["gen_ai.usage.input_tokens"] != nil
+              and IsMatch(attributes["gen_ai.request.model"], "^deepseek-(chat|flash)$")
+          - set(attributes["gen_ai.usage.cost_usd"],
+              (Double(attributes["gen_ai.usage.input_tokens"]) * 0.00000055) +
+              (Double(attributes["gen_ai.usage.output_tokens"]) * 0.00000219))
+            where attributes["gen_ai.usage.input_tokens"] != nil
+              and IsMatch(attributes["gen_ai.request.model"], "^deepseek-reasoner$")
+
+      # --- Groq open-weight (gpt-oss-20b) ---
+      - context: span
+        statements:
+          - set(attributes["gen_ai.usage.cost_usd"],
+              (Double(attributes["gen_ai.usage.input_tokens"]) * 0.0000001) +
+              (Double(attributes["gen_ai.usage.output_tokens"]) * 0.0000005))
+            where attributes["gen_ai.usage.input_tokens"] != nil
+              and IsMatch(attributes["gen_ai.request.model"], "gpt-oss-20b")
+
+      # --- Explicit unknown-model marker ---
+      # A model with no rate must be visibly unpriced, never silently $0:
+      # a zero would quietly understate cost on every dashboard.
+      - context: span
+        statements:
+          - set(attributes["gen_ai.usage.cost_model"], "unpriced")
+            where attributes["gen_ai.usage.input_tokens"] != nil
+              and attributes["gen_ai.usage.cost_usd"] == nil
+          - set(attributes["gen_ai.usage.cost_model"], attributes["gen_ai.request.model"])
+            where attributes["gen_ai.usage.cost_usd"] != nil
+
 exporters:
   debug:
     verbosity: detailed
-  otlphttp/grafana:
+  otlp_http/grafana:
     endpoint: http://grafana-lgtm:4318
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [gen_ai_normalizer]
-      exporters: [debug, otlphttp/grafana]
+      processors: [gen_ai_normalizer, transform/cost]
+      exporters: [debug, otlp_http/grafana, span_metrics]
     metrics:
+      # P5-12: the debug exporter is here on purpose. Without it, "no metrics
+      # arrived" and "metrics arrived and were dropped downstream" look
+      # identical during bring-up.
+      receivers: [otlp, span_metrics]
+      exporters: [debug, otlp_http/grafana]
+    # Phase 5, P5-51 (Step 37): there was no logs pipeline at all, which is
+    # why Step 31 stayed partial - Loki received nothing.
+    logs:
       receivers: [otlp]
-      exporters: [debug, otlphttp/grafana]
+      exporters: [debug, otlp_http/grafana]

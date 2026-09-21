@@ -1,0 +1,38 @@
+# Phase 5, P5-30 (Step 35): dashboard provisioning.
+#
+# This whole directory is bind-mounted over the otel-lgtm image's own
+# dashboards provisioning directory, so the image's three built-in providers
+# are re-declared below rather than lost. (A single-file bind mount was tried
+# first and is unreliable on Docker Desktop for Windows: if the host path is
+# ever missing at `up` time, Docker creates a DIRECTORY there and every
+# later start fails with "not a directory".)
+apiVersion: 1
+
+providers:
+  - name: "Research Copilot"
+    orgId: 1
+    folder: "Research Copilot"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioned-dashboards
+      foldersFromFilesStructure: false
+
+  # --- re-declared from the grafana/otel-lgtm image ---
+  - name: "RED Metrics (classic histogram)"
+    type: file
+    options:
+      path: /otel-lgtm/grafana-dashboard-red-metrics-classic.json
+      foldersFromFilesStructure: false
+  - name: "RED Metrics (exponential/native histogram)"
+    type: file
+    options:
+      path: /otel-lgtm/grafana-dashboard-red-metrics-native.json
+      foldersFromFilesStructure: false
+  - name: "JVM Metrics"
+    type: file
+    options:
+      path: /otel-lgtm/grafana-dashboard-jvm-metrics.json
+      foldersFromFilesStructure: false

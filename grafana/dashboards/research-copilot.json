@@ -1,0 +1,600 @@
+{
+  "uid": "research-copilot-p5",
+  "title": "Research Copilot — Phase 5",
+  "description": "Step 35: one screen. Latency per agent/subagent, tokens and cost per session, tool error rate, steps per run, subagent depth, checkpoint DB size. Panel queries are written against label names verified against live Prometheus data, not guessed.",
+  "tags": [
+    "research-copilot",
+    "phase-5"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 3,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "user_id",
+        "label": "User",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(traces_span_metrics_calls_total, user_id)",
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 2
+      },
+      {
+        "name": "session_id",
+        "label": "Session",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(gen_ai_client_token_usage_sum, session_id)",
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Latency",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false
+    },
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "p95 latency per agent / subagent / tool",
+      "description": "From the Collector's span_metrics connector. span_name is the agent, subagent, middleware or tool span. Internal ASGI plumbing spans are filtered out so the panel shows work, not framework noise.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (span_name, le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"research-copilot-agent\", span_name!~\".* http (send|receive)\", user_id=~\"$user_id\"}[$__rate_interval])))",
+          "legendFormat": "{{span_name}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "p50 latency per agent / subagent / tool",
+      "description": "Same series as the p95 panel. Shown side by side on purpose: a p95 that moves while p50 stays flat means a tail problem, not a general slowdown.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.50, sum by (span_name, le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"research-copilot-agent\", span_name!~\".* http (send|receive)\", user_id=~\"$user_id\"}[$__rate_interval])))",
+          "legendFormat": "{{span_name}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Cost and tokens",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "collapsed": false
+    },
+    {
+      "id": 3,
+      "type": "barchart",
+      "title": "Tokens per session (input vs output)",
+      "description": "gen_ai.client.token.usage, recorded per model call by GenAIMetricsCallbackHandler. session_id is a label on this metric only - it is deliberately NOT a span_metrics dimension, which would have multiplied every RED series by every session ever seen.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 11
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "xTickLabelRotation": -45
+      },
+      "targets": [
+        {
+          "refId": "INPUT",
+          "editorMode": "code",
+          "format": "table",
+          "instant": true,
+          "expr": "sum by (session_id) (max_over_time(gen_ai_client_token_usage_sum{gen_ai_token_type=\"input\", session_id=~\"$session_id\"}[$__range]))"
+        },
+        {
+          "refId": "OUTPUT",
+          "editorMode": "code",
+          "format": "table",
+          "instant": true,
+          "expr": "sum by (session_id) (max_over_time(gen_ai_client_token_usage_sum{gen_ai_token_type=\"output\", session_id=~\"$session_id\"}[$__range]))"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "session_id",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time 1": true,
+              "Time 2": true,
+              "Time": true
+            },
+            "renameByName": {
+              "session_id": "Session",
+              "Value #INPUT": "Input tokens",
+              "Value #OUTPUT": "Output tokens"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Cost per session (USD)",
+      "description": "Cost is computed per model-call SPAN by the Collector's transform/cost processor (never copied onto parents - summing it across a trace would double-count). This panel reconstructs the same figure from token metrics using the same published rates, so it can be read per session without scanning traces. Rates and as-of date: docs/step34_cost_model.md.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 11
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 5
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "session_id"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "string"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "gen_ai_request_model"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "string"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Value",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "format": "table",
+          "instant": true,
+          "expr": "sum by (session_id, gen_ai_request_model) (\n  max_over_time(gen_ai_client_token_usage_sum{gen_ai_token_type=\"input\", session_id=~\"$session_id\"}[$__range])\n  * on (gen_ai_request_model) group_left() (\n      label_replace(vector(2.7e-07), \"gen_ai_request_model\", \"deepseek-chat\", \"\", \"\")\n      or label_replace(vector(2.7e-07), \"gen_ai_request_model\", \"deepseek-flash\", \"\", \"\")\n      or label_replace(vector(5.5e-07), \"gen_ai_request_model\", \"deepseek-reasoner\", \"\", \"\")\n      or label_replace(vector(1e-07), \"gen_ai_request_model\", \"openai/gpt-oss-20b\", \"\", \"\")\n  )\n)\n+\nsum by (session_id, gen_ai_request_model) (\n  max_over_time(gen_ai_client_token_usage_sum{gen_ai_token_type=\"output\", session_id=~\"$session_id\"}[$__range])\n  * on (gen_ai_request_model) group_left() (\n      label_replace(vector(1.1e-06), \"gen_ai_request_model\", \"deepseek-chat\", \"\", \"\")\n      or label_replace(vector(1.1e-06), \"gen_ai_request_model\", \"deepseek-flash\", \"\", \"\")\n      or label_replace(vector(2.19e-06), \"gen_ai_request_model\", \"deepseek-reasoner\", \"\", \"\")\n      or label_replace(vector(5e-07), \"gen_ai_request_model\", \"openai/gpt-oss-20b\", \"\", \"\")\n  )\n)"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value": "Cost (USD)",
+              "session_id": "Session",
+              "gen_ai_request_model": "Model"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Reliability and shape of runs",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "collapsed": false
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Tool-call error rate",
+      "description": "Only meaningful because two bugs were fixed first: failed tool attempts are now STATUS_CODE_ERROR instead of UNSET (they were 0 ERROR / 78 UNSET before, so this panel would have read 0% forever), and Langfuse's @observe is gated so each tool call is exported once rather than twice.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.1
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "sum by (gen_ai_tool_name) (rate(traces_span_metrics_calls_total{gen_ai_tool_name!=\"\", status_code=\"STATUS_CODE_ERROR\", user_id=~\"$user_id\"}[$__rate_interval]))\n/ clamp_min(sum by (gen_ai_tool_name) (rate(traces_span_metrics_calls_total{gen_ai_tool_name!=\"\", user_id=~\"$user_id\"}[$__rate_interval])), 0.0000001)",
+          "legendFormat": "{{gen_ai_tool_name}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Average steps per run",
+      "description": "research_copilot.run.steps - the number of todo items TodoListMiddleware planned. Emitted from both the HTTP and the CLI path.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 15
+              },
+              {
+                "color": "red",
+                "value": 25
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "sum(research_copilot_run_steps_sum) / clamp_min(sum(research_copilot_run_steps_count), 1)"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Runs awaiting approval",
+      "description": "In-process count, not a checkpoint-DB query: it counts approvals pending in the running API process. A restart resets it to 0 even though the threads are still paused on disk. Stated plainly because it changes how the Step 36d alert should be read.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 3
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "max(research_copilot_runs_pending_approval)"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Delegation depth and storage",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 29
+      },
+      "collapsed": false
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Subagent depth (delegation calls per minute, by level)",
+      "description": "P5-32 decision: depth is measured by the named spans the delegation actually produces rather than by computing span-tree depth in the Collector. LangGraph -> task -> researcher/writer -> model is a fixed shape here, so counting each named level gives the same answer as tree-walking, with no extra moving parts. If the graph ever gains variable-depth delegation this must be revisited.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 30
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "sum by (span_name) (rate(traces_span_metrics_calls_total{span_name=~\"LangGraph|task|researcher|writer|model\", user_id=~\"$user_id\"}[$__rate_interval]) * 60)",
+          "legendFormat": "{{span_name}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Checkpoint DB size",
+      "description": "research_copilot.checkpoint.db_size_bytes. The path is resolved absolutely from the package location - the earlier relative 'checkpoints.sqlite' read 0 whenever the process started from any other working directory.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 30
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "max(research_copilot_checkpoint_db_size_bytes)",
+          "legendFormat": "checkpoints.sqlite"
+        }
+      ]
+    }
+  ]
+}
