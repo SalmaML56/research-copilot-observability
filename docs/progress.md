@@ -1,10 +1,10 @@
 # docs/progress.md
 
 ## Current phase and branch
-Phase: 6 — Evaluation framework (IN PROGRESS, 2026-09-22)
+Phase: 6 — Evaluation framework (DONE, 2026-09-22)
 Branch: phase-6/evaluation-framework
 
-## Phase 6 — Evaluation framework — IN PROGRESS (2026-09-22)
+## Phase 6 — Evaluation framework — DONE (2026-09-22)
 
 - Step 38 — offline eval data capture. `capture_runs.py` runs dataset
   prompts through the live agent and saves answer/retrieval_context/
