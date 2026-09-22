@@ -11,6 +11,7 @@ Run:
 """
 
 import json
+import os
 import random
 import uuid
 from pathlib import Path
@@ -52,7 +53,7 @@ FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
 # captures inline at request time instead, the same way Step 38 does for
 # offline runs. Kept out of the 90% non-sampled path entirely: no collector
 # object, no extra callback, no file I/O unless sampled.
-ONLINE_EVAL_SAMPLE_RATE = 0.1
+ONLINE_EVAL_SAMPLE_RATE = float(os.getenv("ONLINE_EVAL_SAMPLE_RATE", "0.1"))
 ONLINE_SAMPLES_PATH = Path("data/eval_results/online_samples.jsonl")
 # LEAD_AGENT_SYSTEM_PROMPT requires human approval before finalize_report on
 # every run, so research() essentially never returns "completed" directly -

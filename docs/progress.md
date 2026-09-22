@@ -28,11 +28,8 @@ Branch: phase-6/evaluation-framework
   Faithfulness stayed 1.00 across all 5, so correctness was the only metric
   that caught it. Documented, not investigated further (out of scope for
   Phase 6): `docs/step38_39_findings.md`.
-- Step 40 — online evals on ~10% of live runs. **Capture mechanism DONE
-  and smoke-tested; the online scorer (reusing Step 39's DeepEval/GroqJudge
-  core on `AnswerRelevancyMetric` + `FaithfulnessMetric`, no
-  `expected_facts` available for arbitrary live topics) is not yet
-  written.**
+- Step 40 — online evals on ~10% of live runs. DONE: capture mechanism and
+  scorer both built and verified against real live traffic.
   The originally planned design — a decoupled scorer pulling sampled trace
   content back out of Langfuse after the fact — turned out not to be
   possible on this self-hosted deployment: verified directly against the
@@ -60,6 +57,20 @@ Branch: phase-6/evaluation-framework
   All capture-path code is wrapped to fail safe (warn-log, never raise) so
   a bug here can't break a real request; verified with a forced-failure
   test, not just by inspection.
+  `score_online.py` reuses Step 39's DeepEval/GroqJudge core (extracted to
+  a shared `evals/scoring_utils.py`, no behavior change to Step 39) on
+  `AnswerRelevancyMetric` + `FaithfulnessMetric` — no `expected_facts`
+  exist for arbitrary live topics, so relevancy stands in for Step 39's
+  correctness. Verified against one genuinely captured live sample (added
+  a `ONLINE_EVAL_SAMPLE_RATE` env override, default unchanged at 0.1, to
+  force sampling for this one supervised test): relevancy 0.56 (pass, but
+  notably not clean — the reason cites "unrelated historical verification,
+  tool failures, and workflow steps" diluting the actual answer, a softer
+  echo of Step 39's self-narration finding), faithfulness 1.00. Both scores
+  independently confirmed present on the real Langfuse trace via a fresh
+  API query (`scores_v3.get_many_v3`), not just trusted from the
+  `create_score` call succeeding. Resume-on-rerun also verified (second run
+  correctly skipped the already-scored row, no duplicate Langfuse writes).
 
 ## Phase 5 — Metrics, dashboards, alerts — DONE (2026-09-21)
 
