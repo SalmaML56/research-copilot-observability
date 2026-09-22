@@ -124,6 +124,30 @@ Branch: phase-6/evaluation-framework
   `langfuse-clickhouse` container (REST `/api/public/scores` 404s on this
   v4 events-only deployment, same constraint as Steps 40/41) for all 5
   primary trace IDs - all 10 rows (5 traces x 2 metrics) present.
+- Step 43 - human feedback. Added `POST /research/{thread_id}/feedback`
+  (`{"thumbs_up": bool}`) to `api/main.py`, pushing a `user_feedback`
+  BOOLEAN score onto the completed response's trace. DONE, verified live.
+  Needed a new piece of state, not just the current span's trace_id:
+  feedback arrives on a separate later HTTP request after the original
+  span has closed, so `trace_id` is persisted keyed by `thread_id`
+  (`data/eval_results/completed_traces/`, same pattern as Step 40's
+  `ONLINE_PENDING_DIR`) at the moment `research()`/`approve()` actually
+  completes; `ResearchResponse` also now returns `trace_id` directly.
+  Verified against a real running server: 404 on an incomplete thread,
+  then a full real `/research` -> `paused_for_approval` -> `/approve` ->
+  `completed` (real trace_id) -> `/feedback` thumbs-up and thumbs-down both
+  confirmed landing in Langfuse by querying the `scores` table directly in
+  `langfuse-clickhouse` (same method Step 42 used - REST `/api/public/scores`
+  404s on this deployment).
+  **Real finding, re-confirming Step 40's gap, not a new bug:** queried
+  the `traces` table for the same trace_id - zero rows. The score is real
+  and correctly attached, but `api/main.py`'s live agent path never runs
+  Langfuse's `CallbackHandler` (OTel-only), so there is no Langfuse trace
+  document behind it - the feedback score will show in Langfuse with no
+  linked trace content in the UI. Also observed a ~8s async ingestion
+  delay between `client.flush()` returning and the score being queryable
+  in ClickHouse (Langfuse's own pipeline, not this endpoint). Full
+  write-up: `docs/step43_human_feedback.md`.
   `score_regressions.py` scores only `status="confirmed"` entries (drafts
   are skipped even if someone forgets to gate them manually - verified
   this refusal directly: ran it against all-draft state first, got "0

@@ -4,6 +4,9 @@ Phase 4, step 30: FastAPI wrapper around the agent.
 POST /research — runs the agent on a given topic.
 POST /research/{thread_id}/approve — approves a paused finalize_report
 call, so the API is actually usable end to end.
+POST /research/{thread_id}/feedback — Phase 6, step 43: thumbs up/down on
+a completed response, pushed as a "user_feedback" score onto that
+response's trace.
 
 Run:
     docker compose up -d
@@ -17,6 +20,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from langfuse import get_client
 from opentelemetry import trace
 from pydantic import BaseModel
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -64,6 +68,15 @@ ONLINE_SAMPLES_PATH = Path("data/eval_results/online_samples.jsonl")
 # thread_id instead of capturing inline in research() alone.
 ONLINE_PENDING_DIR = Path("data/eval_results/online_pending")
 
+# Step 43: human feedback (thumbs up/down) on a completed response, pushed
+# as a score onto that response's own trace. The trace_id a completed
+# response was produced under lives only on that request's OTel span, which
+# is long closed by the time feedback arrives on a separate HTTP request -
+# so it has to be persisted keyed by thread_id, the same id the client
+# already holds (it needed it for /approve). Same pattern as
+# ONLINE_PENDING_DIR: one small file per thread_id, best-effort I/O.
+COMPLETED_TRACE_DIR = Path("data/eval_results/completed_traces")
+
 
 class ResearchRequest(BaseModel):
     topic: str
@@ -78,6 +91,17 @@ class ResearchResponse(BaseModel):
     thread_id: str
     status: str
     answer: str | None = None
+    trace_id: str | None = None
+
+
+class FeedbackRequest(BaseModel):
+    thumbs_up: bool
+
+
+class FeedbackResponse(BaseModel):
+    thread_id: str
+    trace_id: str
+    recorded: bool
 
 
 def _begin_request(thread_id: str, user_id: str):
@@ -137,13 +161,17 @@ def _extract_text_content(content) -> str:
     return str(content)
 
 
+def _current_trace_id() -> str:
+    return format(trace.get_current_span().get_span_context().trace_id, "032x")
+
+
 def _record_online_sample(
     thread_id: str, topic: str, user_id: str, answer: str, retrieval_context: list, tool_calls: list
 ) -> None:
     """Best-effort only: must never fail or slow down the request it rode in
     on. A trace/answer worth scoring was already produced either way."""
     try:
-        trace_id = format(trace.get_current_span().get_span_context().trace_id, "032x")
+        trace_id = _current_trace_id()
         row = {
             "id": thread_id,
             "prompt": topic,
@@ -174,6 +202,27 @@ def _write_pending_capture(thread_id: str, topic: str, user_id: str, collector: 
         (ONLINE_PENDING_DIR / f"{thread_id}.json").write_text(json.dumps(row))
     except Exception:
         log.warning("online eval pending capture failed", exc_info=True)
+
+
+def _record_completed_trace(thread_id: str, trace_id: str) -> None:
+    """Best-effort only, same rule as _record_online_sample: must never fail
+    or slow down the request that produced a real, completed answer."""
+    try:
+        COMPLETED_TRACE_DIR.mkdir(parents=True, exist_ok=True)
+        (COMPLETED_TRACE_DIR / f"{thread_id}.json").write_text(json.dumps({"trace_id": trace_id}))
+    except Exception:
+        log.warning("completed trace record failed", exc_info=True)
+
+
+def _get_completed_trace(thread_id: str) -> str | None:
+    path = COMPLETED_TRACE_DIR / f"{thread_id}.json"
+    try:
+        if not path.exists():
+            return None
+        return json.loads(path.read_text())["trace_id"]
+    except Exception:
+        log.warning("completed trace read failed", exc_info=True)
+        return None
 
 
 def _pop_pending_capture(thread_id: str) -> dict | None:
@@ -227,6 +276,8 @@ def research(request: ResearchRequest) -> ResearchResponse:
             clear_pending_approval(thread_id)
             log.info("research completed")
             answer = _extract_text_content(result["messages"][-1].content)
+            trace_id = _current_trace_id()
+            _record_completed_trace(thread_id, trace_id)
             if collector is not None:
                 _record_online_sample(
                     thread_id, request.topic, request.user_id, answer, collector.search_outputs, collector.tool_calls
@@ -235,6 +286,7 @@ def research(request: ResearchRequest) -> ResearchResponse:
                 thread_id=thread_id,
                 status="completed",
                 answer=answer,
+                trace_id=trace_id,
             )
     finally:
         reset_identity(identity_token)
@@ -282,6 +334,8 @@ def approve(thread_id: str) -> ResearchResponse:
             clear_pending_approval(thread_id)
             log.info("run completed after approval")
             answer = _extract_text_content(result["messages"][-1].content)
+            trace_id = _current_trace_id()
+            _record_completed_trace(thread_id, trace_id)
             pending = _pop_pending_capture(thread_id)
             if pending is not None:
                 _record_online_sample(
@@ -296,9 +350,42 @@ def approve(thread_id: str) -> ResearchResponse:
                 thread_id=thread_id,
                 status="completed",
                 answer=answer,
+                trace_id=trace_id,
             )
     finally:
         reset_identity(identity_token)
+
+
+@app.post("/research/{thread_id}/feedback", response_model=FeedbackResponse)
+def feedback(thread_id: str, request: FeedbackRequest) -> FeedbackResponse:
+    """
+    Thumbs up/down on a completed response, pushed as a score onto that
+    response's own trace (looked up via _get_completed_trace - see
+    COMPLETED_TRACE_DIR's docstring for why this can't just read the
+    current span's trace_id, unlike _record_online_sample).
+
+    Explicit flush(): unlike the rest of this long-running app (which
+    relies on Langfuse's background batching), user feedback is low-volume
+    and each one is worth losing a request-latency margin for - this repo
+    has already lost in-flight background work to unrelated process
+    restarts more than once this session, and a queued-but-unflushed score
+    would silently vanish the same way.
+    """
+    trace_id = _get_completed_trace(thread_id)
+    if trace_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No completed response found for this thread_id.",
+        )
+    get_client().create_score(
+        trace_id=trace_id,
+        name="user_feedback",
+        value=1.0 if request.thumbs_up else 0.0,
+        data_type="BOOLEAN",
+    )
+    get_client().flush()
+    log.info("feedback recorded", extra={"thread_id": thread_id, "thumbs_up": request.thumbs_up})
+    return FeedbackResponse(thread_id=thread_id, trace_id=trace_id, recorded=True)
 
 
 @app.get("/health")
