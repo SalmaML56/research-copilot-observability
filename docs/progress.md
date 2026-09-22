@@ -28,6 +28,38 @@ Branch: phase-6/evaluation-framework
   Faithfulness stayed 1.00 across all 5, so correctness was the only metric
   that caught it. Documented, not investigated further (out of scope for
   Phase 6): `docs/step38_39_findings.md`.
+- Step 40 — online evals on ~10% of live runs. **Capture mechanism DONE
+  and smoke-tested; the online scorer (reusing Step 39's DeepEval/GroqJudge
+  core on `AnswerRelevancyMetric` + `FaithfulnessMetric`, no
+  `expected_facts` available for arbitrary live topics) is not yet
+  written.**
+  The originally planned design — a decoupled scorer pulling sampled trace
+  content back out of Langfuse after the fact — turned out not to be
+  possible on this self-hosted deployment: verified directly against the
+  running instance that `trace.list`/`trace.get` 404 (Langfuse v4
+  "events_only" mode disables them), and `observations.get_many` returns
+  every observation's `input`/`output` as `None` regardless of requested
+  fields. `create_score(trace_id=...)` does work (same as Step 39 already
+  relies on). So capture happens inline instead: `api/main.py`'s
+  `/research` handler samples ~10% of requests (`random.random() < 0.1`,
+  decided before any collector/callback cost is paid — the other 90% pay
+  nothing extra) and attaches the same `ToolCollector` Step 38 uses
+  (extracted to `evals/tool_collector.py`, shared by both).
+  **Second real finding, caught by smoke-testing before commit, not by
+  code review:** `LEAD_AGENT_SYSTEM_PROMPT` requires human approval before
+  every `finalize_report`, so `research()` essentially never returns
+  `"completed"` directly — confirmed live (4/4 smoke-test requests paused;
+  the 2 that were approved completed via `/approve`, not `/research`). The
+  first version of this capture only recorded on `research()`'s own
+  completion, which would have captured zero samples on real traffic. Fixed
+  with a pending-capture file per `thread_id`
+  (`data/eval_results/online_pending/`), written when a sampled run pauses,
+  consumed and finalized into `data/eval_results/online_samples.jsonl`
+  (gitignored, same as Step 38/39's output) whichever request — `research()`
+  or `approve()` — actually produces the completion.
+  All capture-path code is wrapped to fail safe (warn-log, never raise) so
+  a bug here can't break a real request; verified with a forced-failure
+  test, not just by inspection.
 
 ## Phase 5 — Metrics, dashboards, alerts — DONE (2026-09-21)
 
