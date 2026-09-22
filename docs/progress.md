@@ -1,8 +1,33 @@
 # docs/progress.md
 
 ## Current phase and branch
-Phase: 5 — Metrics, dashboards, alerts (DONE, 2026-09-21)
-Branch: phase-5/metrics-dashboards-alerts
+Phase: 6 — Evaluation framework (IN PROGRESS, 2026-09-22)
+Branch: phase-6/evaluation-framework
+
+## Phase 6 — Evaluation framework — IN PROGRESS (2026-09-22)
+
+- Step 38 — offline eval data capture. `capture_runs.py` runs dataset
+  prompts through the live agent and saves answer/retrieval_context/
+  tool_calls/trace_id per prompt to `data/eval_results/step38_runs.jsonl`.
+  5 of the 25-prompt dataset (rc-001–rc-005) captured — enough to
+  demonstrate the framework, by explicit scope decision, not the full set.
+  All 5 have `status: "ok"`.
+- Step 39 — offline eval scoring. `score_runs.py` scores each row with
+  DeepEval (`GroqJudge`, `openai/gpt-oss-120b`) on correctness
+  (`GEval` vs. `expected_facts`) and faithfulness (`FaithfulnessMetric` vs.
+  `retrieval_context`), writes `data/eval_results/step39_scores.jsonl`, and
+  pushes both scores onto each row's Langfuse trace. Required capping
+  context/answer text fed to the judge and retrying transient Groq errors
+  to work within the Groq free tier's 8000 TPM limit — see inline comments
+  in `score_runs.py`.
+  **Real finding, not a scoring bug:** 3 of 5 runs (60%) scored
+  correctness=0.00 despite capture `status: "ok"` — the lead agent gave up
+  after the researcher subagent's `write_file` succeeded but its own
+  `read_file` on the same path found nothing, the exact failure mode Step
+  18 Finding 3 bounded (capped retry, no hang) but never root-caused.
+  Faithfulness stayed 1.00 across all 5, so correctness was the only metric
+  that caught it. Documented, not investigated further (out of scope for
+  Phase 6): `docs/step38_39_findings.md`.
 
 ## Phase 5 — Metrics, dashboards, alerts — DONE (2026-09-21)
 
