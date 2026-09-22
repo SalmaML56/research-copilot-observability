@@ -1,8 +1,164 @@
 # docs/progress.md
 
 ## Current phase and branch
-Phase: 5 — Metrics, dashboards, alerts (DONE, 2026-09-21)
-Branch: phase-5/metrics-dashboards-alerts
+Phase: 6 — Evaluation framework (DONE, 2026-09-22)
+Branch: phase-6/evaluation-framework
+
+## Phase 6 — Evaluation framework — DONE (2026-09-22)
+
+- Step 38 — offline eval data capture. `capture_runs.py` runs dataset
+  prompts through the live agent and saves answer/retrieval_context/
+  tool_calls/trace_id per prompt to `data/eval_results/step38_runs.jsonl`.
+  5 of the 25-prompt dataset (rc-001–rc-005) captured — enough to
+  demonstrate the framework, by explicit scope decision, not the full set.
+  All 5 have `status: "ok"`.
+- Step 39 — offline eval scoring. `score_runs.py` scores each row with
+  DeepEval (`GroqJudge`, `openai/gpt-oss-120b`) on correctness
+  (`GEval` vs. `expected_facts`) and faithfulness (`FaithfulnessMetric` vs.
+  `retrieval_context`), writes `data/eval_results/step39_scores.jsonl`, and
+  pushes both scores onto each row's Langfuse trace. Required capping
+  context/answer text fed to the judge and retrying transient Groq errors
+  to work within the Groq free tier's 8000 TPM limit — see inline comments
+  in `score_runs.py`.
+  **Real finding, not a scoring bug:** 3 of 5 runs (60%) scored
+  correctness=0.00 despite capture `status: "ok"` — the lead agent gave up
+  after the researcher subagent's `write_file` succeeded but its own
+  `read_file` on the same path found nothing, the exact failure mode Step
+  18 Finding 3 bounded (capped retry, no hang) but never root-caused.
+  Faithfulness stayed 1.00 across all 5, so correctness was the only metric
+  that caught it. Documented, not investigated further (out of scope for
+  Phase 6): `docs/step38_39_findings.md`.
+- Step 40 — online evals on ~10% of live runs. DONE: capture mechanism and
+  scorer both built and verified against real live traffic.
+  The originally planned design — a decoupled scorer pulling sampled trace
+  content back out of Langfuse after the fact — turned out not to be
+  possible on this self-hosted deployment: verified directly against the
+  running instance that `trace.list`/`trace.get` 404 (Langfuse v4
+  "events_only" mode disables them), and `observations.get_many` returns
+  every observation's `input`/`output` as `None` regardless of requested
+  fields. `create_score(trace_id=...)` does work (same as Step 39 already
+  relies on). So capture happens inline instead: `api/main.py`'s
+  `/research` handler samples ~10% of requests (`random.random() < 0.1`,
+  decided before any collector/callback cost is paid — the other 90% pay
+  nothing extra) and attaches the same `ToolCollector` Step 38 uses
+  (extracted to `evals/tool_collector.py`, shared by both).
+  **Second real finding, caught by smoke-testing before commit, not by
+  code review:** `LEAD_AGENT_SYSTEM_PROMPT` requires human approval before
+  every `finalize_report`, so `research()` essentially never returns
+  `"completed"` directly — confirmed live (4/4 smoke-test requests paused;
+  the 2 that were approved completed via `/approve`, not `/research`). The
+  first version of this capture only recorded on `research()`'s own
+  completion, which would have captured zero samples on real traffic. Fixed
+  with a pending-capture file per `thread_id`
+  (`data/eval_results/online_pending/`), written when a sampled run pauses,
+  consumed and finalized into `data/eval_results/online_samples.jsonl`
+  (gitignored, same as Step 38/39's output) whichever request — `research()`
+  or `approve()` — actually produces the completion.
+  All capture-path code is wrapped to fail safe (warn-log, never raise) so
+  a bug here can't break a real request; verified with a forced-failure
+  test, not just by inspection.
+  `score_online.py` reuses Step 39's DeepEval/GroqJudge core (extracted to
+  a shared `evals/scoring_utils.py`, no behavior change to Step 39) on
+  `AnswerRelevancyMetric` + `FaithfulnessMetric` — no `expected_facts`
+  exist for arbitrary live topics, so relevancy stands in for Step 39's
+  correctness. Verified against one genuinely captured live sample (added
+  a `ONLINE_EVAL_SAMPLE_RATE` env override, default unchanged at 0.1, to
+  force sampling for this one supervised test): relevancy 0.56 (pass, but
+  notably not clean — the reason cites "unrelated historical verification,
+  tool failures, and workflow steps" diluting the actual answer, a softer
+  echo of Step 39's self-narration finding), faithfulness 1.00. Both scores
+  independently confirmed present on the real Langfuse trace via a fresh
+  API query (`scores_v3.get_many_v3`), not just trusted from the
+  `create_score` call succeeding. Resume-on-rerun also verified (second run
+  correctly skipped the already-scored row, no duplicate Langfuse writes).
+- Step 41 — the failure-to-dataset loop (generic, reusable mechanism;
+  rc-001/003/005 are the first real case flowing through it, not
+  hardcoded). DONE.
+  **Verified before building on it, same discipline as Step 40:**
+  Langfuse-side trace tagging isn't viable here either -
+  `comments.create` validates its target through the same lookup path
+  `trace.list`/`trace.get` use, which events-only mode disables (404
+  "Reference object, TRACE: ... not found", same root cause as Step 40).
+  `dataset_items.create(..., source_trace_id=...)` does work and
+  round-trips correctly (tested and cleaned up) - a viable Langfuse-native
+  option, but not used here since Steps 38-40 already keep everything
+  locally, so "identify failures" and "export" both reduce to reading
+  `step39_scores.jsonl`/`online_scores.jsonl` and joining back to
+  `step38_runs.jsonl`/`online_samples.jsonl` by id - no Langfuse read
+  needed at all.
+  `find_regressions.py` scans both scores files for sub-threshold rows,
+  auto-drafts a `corrected_expectation` by asking `GroqJudge` to
+  generalize its own failure reason into a reusable, topic-agnostic
+  statement, and writes `data/regression_cases.jsonl` (git-tracked, same
+  as `test_dataset.jsonl` - a curated artifact, not ephemeral run output)
+  with `status="draft_needs_review"`. Nothing is auto-committed: real run
+  found 3 failures (rc-001/003/005) and drafted 3 candidates, one of which
+  (rc-001's) was close to right and two of which drifted toward
+  restating "include all facts" - a real demonstration of why the human
+  gate matters, not a hypothetical one. All 3 confirmed by hand with the
+  same wording: "the agent must produce a substantive answer with actual
+  facts, not a research-incomplete report, when the underlying
+  search/research actually succeeded" - checked this premise against the
+  real data first (all 3 had 36-41 genuine on-topic search results in
+  `retrieval_context`, so "research actually succeeded" is factually
+  grounded, not assumed).
+- Step 42 - A/B test, frontier (DeepSeek `deepseek-chat`) vs. open-weight
+  (Groq `openai/gpt-oss-20b`), same 5 prompts (rc-001-rc-005) as Steps
+  38/39, same correctness/faithfulness metrics and judge so cost and
+  quality sit on one scale. DONE (capture + score + comparison), but the
+  intended cost/quality comparison itself did not complete as designed -
+  see below.
+  **Real finding, the headline result, not a footnote:** primary arm 5/5
+  completed (mean cost $0.220759/run, mean correctness 0.46, mean
+  faithfulness 0.99); cheap arm **0/5 completed** - every attempt errored
+  on Groq's on-demand tier limits for `openai/gpt-oss-20b` (two distinct
+  limits hit: `413` per-request 8000 TPM ceiling on rc-001/002, then a
+  **daily** 200,000 TPD budget exhausted by rc-003/004/005, confirmed by
+  the literal `Used 198204.../200000` climbing across those three errors).
+  No cost/quality numbers exist for the cheap arm - nothing to average.
+  Root cause not fixed (would mean changing the agent config specifically
+  to make one A/B arm pass, undermining the comparison): full write-up,
+  verbatim error text and the `compare_ab_runs.py` aggregate output in
+  `docs/step42_ab_test.md`. Verification: scores confirmed landing in
+  Langfuse by querying the `scores` table directly in the
+  `langfuse-clickhouse` container (REST `/api/public/scores` 404s on this
+  v4 events-only deployment, same constraint as Steps 40/41) for all 5
+  primary trace IDs - all 10 rows (5 traces x 2 metrics) present.
+- Step 43 - human feedback. Added `POST /research/{thread_id}/feedback`
+  (`{"thumbs_up": bool}`) to `api/main.py`, pushing a `user_feedback`
+  BOOLEAN score onto the completed response's trace. DONE, verified live.
+  Needed a new piece of state, not just the current span's trace_id:
+  feedback arrives on a separate later HTTP request after the original
+  span has closed, so `trace_id` is persisted keyed by `thread_id`
+  (`data/eval_results/completed_traces/`, same pattern as Step 40's
+  `ONLINE_PENDING_DIR`) at the moment `research()`/`approve()` actually
+  completes; `ResearchResponse` also now returns `trace_id` directly.
+  Verified against a real running server: 404 on an incomplete thread,
+  then a full real `/research` -> `paused_for_approval` -> `/approve` ->
+  `completed` (real trace_id) -> `/feedback` thumbs-up and thumbs-down both
+  confirmed landing in Langfuse by querying the `scores` table directly in
+  `langfuse-clickhouse` (same method Step 42 used - REST `/api/public/scores`
+  404s on this deployment).
+  **Real finding, re-confirming Step 40's gap, not a new bug:** queried
+  the `traces` table for the same trace_id - zero rows. The score is real
+  and correctly attached, but `api/main.py`'s live agent path never runs
+  Langfuse's `CallbackHandler` (OTel-only), so there is no Langfuse trace
+  document behind it - the feedback score will show in Langfuse with no
+  linked trace content in the UI. Also observed a ~8s async ingestion
+  delay between `client.flush()` returning and the score being queryable
+  in ClickHouse (Langfuse's own pipeline, not this endpoint). Full
+  write-up: `docs/step43_human_feedback.md`.
+  `score_regressions.py` scores only `status="confirmed"` entries (drafts
+  are skipped even if someone forgets to gate them manually - verified
+  this refusal directly: ran it against all-draft state first, got "0
+  confirmed regression case(s) to score") with one generic `GEval`
+  ("does actual output fulfill corrected_expectation") reusable across any
+  future regression case regardless of topic. Real run against the 3
+  confirmed cases: all 3 scored 0.00, correctly flagged as still-failing
+  (the underlying bug is unfixed, per Step 39 - this proves the check
+  would catch it, not that it's resolved). All 3 scores independently
+  confirmed present on their real Langfuse traces via a fresh API query.
+  Shares Step 39/40's rate-limit backoff via `scoring_utils.py`.
 
 ## Phase 5 — Metrics, dashboards, alerts — DONE (2026-09-21)
 
