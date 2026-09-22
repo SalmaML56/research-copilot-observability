@@ -102,6 +102,28 @@ Branch: phase-6/evaluation-framework
   real data first (all 3 had 36-41 genuine on-topic search results in
   `retrieval_context`, so "research actually succeeded" is factually
   grounded, not assumed).
+- Step 42 - A/B test, frontier (DeepSeek `deepseek-chat`) vs. open-weight
+  (Groq `openai/gpt-oss-20b`), same 5 prompts (rc-001-rc-005) as Steps
+  38/39, same correctness/faithfulness metrics and judge so cost and
+  quality sit on one scale. DONE (capture + score + comparison), but the
+  intended cost/quality comparison itself did not complete as designed -
+  see below.
+  **Real finding, the headline result, not a footnote:** primary arm 5/5
+  completed (mean cost $0.220759/run, mean correctness 0.46, mean
+  faithfulness 0.99); cheap arm **0/5 completed** - every attempt errored
+  on Groq's on-demand tier limits for `openai/gpt-oss-20b` (two distinct
+  limits hit: `413` per-request 8000 TPM ceiling on rc-001/002, then a
+  **daily** 200,000 TPD budget exhausted by rc-003/004/005, confirmed by
+  the literal `Used 198204.../200000` climbing across those three errors).
+  No cost/quality numbers exist for the cheap arm - nothing to average.
+  Root cause not fixed (would mean changing the agent config specifically
+  to make one A/B arm pass, undermining the comparison): full write-up,
+  verbatim error text and the `compare_ab_runs.py` aggregate output in
+  `docs/step42_ab_test.md`. Verification: scores confirmed landing in
+  Langfuse by querying the `scores` table directly in the
+  `langfuse-clickhouse` container (REST `/api/public/scores` 404s on this
+  v4 events-only deployment, same constraint as Steps 40/41) for all 5
+  primary trace IDs - all 10 rows (5 traces x 2 metrics) present.
   `score_regressions.py` scores only `status="confirmed"` entries (drafts
   are skipped even if someone forgets to gate them manually - verified
   this refusal directly: ran it against all-draft state first, got "0
