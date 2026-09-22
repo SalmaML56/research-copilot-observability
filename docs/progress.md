@@ -71,6 +71,48 @@ Branch: phase-6/evaluation-framework
   API query (`scores_v3.get_many_v3`), not just trusted from the
   `create_score` call succeeding. Resume-on-rerun also verified (second run
   correctly skipped the already-scored row, no duplicate Langfuse writes).
+- Step 41 — the failure-to-dataset loop (generic, reusable mechanism;
+  rc-001/003/005 are the first real case flowing through it, not
+  hardcoded). DONE.
+  **Verified before building on it, same discipline as Step 40:**
+  Langfuse-side trace tagging isn't viable here either -
+  `comments.create` validates its target through the same lookup path
+  `trace.list`/`trace.get` use, which events-only mode disables (404
+  "Reference object, TRACE: ... not found", same root cause as Step 40).
+  `dataset_items.create(..., source_trace_id=...)` does work and
+  round-trips correctly (tested and cleaned up) - a viable Langfuse-native
+  option, but not used here since Steps 38-40 already keep everything
+  locally, so "identify failures" and "export" both reduce to reading
+  `step39_scores.jsonl`/`online_scores.jsonl` and joining back to
+  `step38_runs.jsonl`/`online_samples.jsonl` by id - no Langfuse read
+  needed at all.
+  `find_regressions.py` scans both scores files for sub-threshold rows,
+  auto-drafts a `corrected_expectation` by asking `GroqJudge` to
+  generalize its own failure reason into a reusable, topic-agnostic
+  statement, and writes `data/regression_cases.jsonl` (git-tracked, same
+  as `test_dataset.jsonl` - a curated artifact, not ephemeral run output)
+  with `status="draft_needs_review"`. Nothing is auto-committed: real run
+  found 3 failures (rc-001/003/005) and drafted 3 candidates, one of which
+  (rc-001's) was close to right and two of which drifted toward
+  restating "include all facts" - a real demonstration of why the human
+  gate matters, not a hypothetical one. All 3 confirmed by hand with the
+  same wording: "the agent must produce a substantive answer with actual
+  facts, not a research-incomplete report, when the underlying
+  search/research actually succeeded" - checked this premise against the
+  real data first (all 3 had 36-41 genuine on-topic search results in
+  `retrieval_context`, so "research actually succeeded" is factually
+  grounded, not assumed).
+  `score_regressions.py` scores only `status="confirmed"` entries (drafts
+  are skipped even if someone forgets to gate them manually - verified
+  this refusal directly: ran it against all-draft state first, got "0
+  confirmed regression case(s) to score") with one generic `GEval`
+  ("does actual output fulfill corrected_expectation") reusable across any
+  future regression case regardless of topic. Real run against the 3
+  confirmed cases: all 3 scored 0.00, correctly flagged as still-failing
+  (the underlying bug is unfixed, per Step 39 - this proves the check
+  would catch it, not that it's resolved). All 3 scores independently
+  confirmed present on their real Langfuse traces via a fresh API query.
+  Shares Step 39/40's rate-limit backoff via `scoring_utils.py`.
 
 ## Phase 5 — Metrics, dashboards, alerts — DONE (2026-09-21)
 
