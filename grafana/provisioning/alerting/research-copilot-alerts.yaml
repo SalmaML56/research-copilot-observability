@@ -230,7 +230,12 @@ groups:
       # ------------------------------------------------------------------
       # (e) P5-44 - checkpoint DB growing faster than expected
       # ------------------------------------------------------------------
-      # Calibrated against measured growth, not a round number. The tracked
+      # Phase 7, step 46: the gauge now measures the Postgres checkpoint
+      # tables (checkpoints.sqlite is retired). Measured on Postgres: 4 real
+      # runs = 2.8 MB, ~0.7 MB per run. The threshold below is UNCHANGED
+      # from the SQLite era and needs recalibrating: at ~0.7 MB/run, 5 MB/h
+      # is ~7 runs/hour, no longer an order of magnitude above normal use.
+      # Original (SQLite) calibration: the tracked
       # checkpoints.sqlite is ~13.7 MB after the project's whole history of
       # runs. A single research run adds on the order of a few hundred KB.
       # 5 MB/hour is therefore roughly an order of magnitude above normal
@@ -245,7 +250,7 @@ groups:
           severity: warning
           phase: "5"
         annotations:
-          summary: "checkpoints.sqlite is growing at more than 5 MB/hour."
+          summary: "Postgres checkpoint tables are growing at more than 5 MB/hour."
           description: "Sustained growth well above single-operator baseline (~13.7 MB total across the project's history). Usually means a run is looping and rewriting state, or message history is not being trimmed."
           runbook_url: "docs/tasks-ph5.md#p5-44-p1--alert-e-checkpoint-db-growing-faster-than-expected"
         data:

@@ -21,6 +21,12 @@ class Settings:
     cheap_model_name: str = os.getenv("CHEAP_MODEL_NAME", "openai/gpt-oss-20b")
     model_profile: str = os.getenv("MODEL_PROFILE", "primary")
     prompt_version: str = os.getenv("PROMPT_VERSION", "v1")
+    # Phase 7, step 46: agent checkpoints (dedicated checkpoint-postgres).
+    # Lives here, not in checkpointed_agent.py, because metrics_setup.py
+    # needs it too and checkpointed_agent.py already imports metrics_setup.
+    checkpoint_db_uri: str = os.getenv(
+        "CHECKPOINT_DB_URI", "postgresql://checkpoints:checkpoints@localhost:5433/checkpoints"
+    )
 
     def validate(self) -> None:
         if self.model_profile not in VALID_MODEL_PROFILES:

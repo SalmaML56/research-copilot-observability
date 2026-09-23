@@ -559,7 +559,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "Checkpoint DB size",
-      "description": "research_copilot.checkpoint.db_size_bytes. The path is resolved absolutely from the package location - the earlier relative 'checkpoints.sqlite' read 0 whenever the process started from any other working directory.",
+      "description": "research_copilot.checkpoint.db_size_bytes: total size of the Postgres checkpoint tables (Phase 7, step 46; checkpoints.sqlite is retired). No datapoint, rather than 0, while checkpoint-postgres is unreachable.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"

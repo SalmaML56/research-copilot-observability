@@ -14,7 +14,6 @@ Run to trigger the pause:
     uv run python -m research_copilot.agents.checkpointed_agent "Research small modular nuclear reactors and write a short report."
 """
 
-import os
 import sys
 from contextlib import contextmanager
 
@@ -37,9 +36,7 @@ from research_copilot.observability.logging_setup import setup_logging, flush_lo
 settings.validate()
 
 THREAD_ID = "phase1-step10-demo-thread-v2"
-CHECKPOINT_DB_URI = os.getenv(
-    "CHECKPOINT_DB_URI", "postgresql://checkpoints:checkpoints@localhost:5433/checkpoints"
-)
+CHECKPOINT_DB_URI = settings.checkpoint_db_uri
 # PostgresSaver needs these on every connection: autocommit because setup()
 # runs CREATE INDEX CONCURRENTLY, dict_row because it reads rows by column
 # name. Same values its own from_conn_string() uses - a pool built without

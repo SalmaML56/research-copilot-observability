@@ -20,12 +20,13 @@ OpenAI-compatible wrapper internally). gen_ai.provider.name is therefore
 derived from our OWN settings.model_profile, not from response metadata.
 """
 
+import logging
 import os
 import time
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+import psycopg
 from langchain_core.callbacks import BaseCallbackHandler
 from opentelemetry import metrics
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
@@ -58,16 +59,38 @@ def clear_pending_approval(thread_id: str) -> None:
     _pending_approvals.discard(thread_id)
 
 
-def _checkpoint_db_path() -> Path:
-    """P5-30 fix: this used to be the bare relative string
-    "checkpoints.sqlite", so the gauge silently read 0 whenever the process
-    was started from any directory other than the repo root - which is the
-    normal case for uvicorn under a process manager."""
-    configured = os.getenv("CHECKPOINT_DB_PATH")
-    if configured:
-        return Path(configured).expanduser().resolve()
-    # repo root = .../src/research_copilot/observability/metrics_setup.py
-    return (Path(__file__).resolve().parents[3] / "checkpoints.sqlite").resolve()
+log = logging.getLogger(__name__)
+
+# Phase 7, step 46 (plan Q12a): checkpoints moved from checkpoints.sqlite to
+# Postgres, so the old file-size gauge would have reported a stale file
+# forever. Measures the checkpoint tables themselves, not
+# pg_database_size(): the database also holds ~7 MB of Postgres catalog,
+# which would bury small real growth in the gauge's level.
+_CHECKPOINT_SIZE_SQL = (
+    "SELECT COALESCE(SUM(pg_total_relation_size(c::regclass)), 0) FROM unnest("
+    "ARRAY['checkpoints', 'checkpoint_blobs', 'checkpoint_writes', 'checkpoint_migrations']) AS c "
+    "WHERE to_regclass(c) IS NOT NULL"
+)
+_checkpoint_size_conn: psycopg.Connection | None = None
+
+
+def _checkpoint_tables_size_bytes() -> int | None:
+    """One long-lived connection, reopened after any failure. The gauge is
+    read every 5s, so a connection per read would be pure churn. Never
+    raises: a metrics callback that throws would lose the whole export."""
+    global _checkpoint_size_conn
+    try:
+        if _checkpoint_size_conn is None or _checkpoint_size_conn.closed:
+            _checkpoint_size_conn = psycopg.connect(
+                settings.checkpoint_db_uri, autocommit=True, connect_timeout=3
+            )
+        return int(_checkpoint_size_conn.execute(_CHECKPOINT_SIZE_SQL).fetchone()[0])
+    except Exception:
+        log.warning("checkpoint size query failed", exc_info=True)
+        if _checkpoint_size_conn is not None:
+            _checkpoint_size_conn.close()
+        _checkpoint_size_conn = None
+        return None
 
 
 def setup_metrics_instrumentation(otlp_endpoint: str | None = None) -> MeterProvider:
@@ -115,14 +138,16 @@ def setup_metrics_instrumentation(otlp_endpoint: str | None = None) -> MeterProv
     )
 
     def _observe_checkpoint_db_size(options):
-        path = _checkpoint_db_path()
-        size = path.stat().st_size if path.exists() else 0
-        yield metrics.Observation(size, {"db.path": str(path)})
+        # No observation on failure rather than a fake 0: a 0 would read as
+        # a sudden shrink on the dashboard and skew the growth alert.
+        size = _checkpoint_tables_size_bytes()
+        if size is not None:
+            yield metrics.Observation(size, {"db.system": "postgresql"})
 
     meter.create_observable_gauge(
         name="research_copilot.checkpoint.db_size_bytes",
         unit="By",
-        description="Size of the SQLite checkpoint database on disk",
+        description="Total size of the Postgres checkpoint tables",
         callbacks=[_observe_checkpoint_db_size],
     )
 
