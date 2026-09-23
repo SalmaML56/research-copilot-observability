@@ -104,7 +104,7 @@ Branch: phase-7/production-hardening
 47. Load-test with 20 concurrent sessions, confirm no cross-session trace leakage.
 48. Measure human-in-the-loop approval queue (time paused -> approved, rejection rate).
 
-STATUS: NOT STARTED
+STATUS: DONE (branch phase-7/production-hardening, PR into develop pending)
 
 ## Phase 8 — Close the loop with CI
 Branch: phase-8/ci-cd-pipeline
