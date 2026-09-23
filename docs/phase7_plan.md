@@ -16,6 +16,22 @@
 **Status:** plan only. No code written. Blocked on the open questions at
 the end.
 
+## Decisions (answered 2026-09-23)
+
+| Q | Answer |
+|---|---|
+| Q1–Q5 | *pending* |
+| Q6 | (b) keep or drop per session, via a deterministic flag from a hash of `session_id` |
+| Q7a | Yes: redaction is on by default in prod. Unredacted full capture is the per-env opt-in |
+| Q7b | (a) collector traces + logs only. Checkpoint DB, eval files and direct-Langfuse mode documented as gaps. `debug` exporter off outside dev |
+| Q8 | (c) stub model for the 20-session leakage test + ~5 real DeepSeek runs. Reason: repeated Codespace interruptions during long runs, and to keep cost/time controlled |
+| Q9 | (a) bypass: load-test sessions are always kept |
+| Q10a | (a) reject with optional reason |
+| Q10b | (a) `paused_at` in a Postgres table |
+| Q11 | Order 46 → 44 → 45 → 48 → 47 approved |
+| Q12 | (a) + (b): Postgres table-size gauge + alert (e) updated; pending-approval gauge from a DB query |
+| Q13 | Yes. Done in `06d6865` |
+
 ---
 
 ## Verified current state (evidence for everything below)
