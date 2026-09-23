@@ -9,7 +9,9 @@ from langchain_groq import ChatGroq
 
 load_dotenv()
 
-VALID_MODEL_PROFILES = ("primary", "cheap")
+# "stub": Phase 7, step 47 load test only - a scripted fake model
+# (agents/stub_model.py), never a real answer.
+VALID_MODEL_PROFILES = ("primary", "cheap", "stub")
 
 
 class Settings:
@@ -21,6 +23,12 @@ class Settings:
     cheap_model_name: str = os.getenv("CHEAP_MODEL_NAME", "openai/gpt-oss-20b")
     model_profile: str = os.getenv("MODEL_PROFILE", "primary")
     prompt_version: str = os.getenv("PROMPT_VERSION", "v1")
+    # Phase 7, step 46: agent checkpoints (dedicated checkpoint-postgres).
+    # Lives here, not in checkpointed_agent.py, because metrics_setup.py
+    # needs it too and checkpointed_agent.py already imports metrics_setup.
+    checkpoint_db_uri: str = os.getenv(
+        "CHECKPOINT_DB_URI", "postgresql://checkpoints:checkpoints@localhost:5433/checkpoints"
+    )
 
     def validate(self) -> None:
         if self.model_profile not in VALID_MODEL_PROFILES:
@@ -57,6 +65,10 @@ class Settings:
 
     @property
     def default_model(self) -> ChatDeepSeek | ChatGroq:
+        if self.model_profile == "stub":
+            from research_copilot.agents.stub_model import StubChatModel
+
+            return StubChatModel()
         if self.model_profile == "cheap":
             return self.get_cheap_model()
         return self.get_primary_model()

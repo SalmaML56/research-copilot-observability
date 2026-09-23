@@ -2,9 +2,15 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.159.0
     container_name: otel-collector
-    command: ["--config=/etc/otel-collector-config.yaml"]
+    # Phase 7, step 45: the second file picks the capture mode. Default
+    # "redacted"; COLLECTOR_CAPTURE=full (in .env) is the unredacted dev
+    # opt-in. Anything else names a missing file and the collector won't
+    # start, rather than silently running unredacted.
+    command:
+      - "--config=/etc/otelcol/otel-collector-config.yaml"
+      - "--config=/etc/otelcol/capture-${COLLECTOR_CAPTURE:-redacted}.yaml"
     volumes:
-      - ./collector/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+      - ./collector:/etc/otelcol:ro
     ports:
       - "4317:4317"
       - "4318:4318"
@@ -64,6 +70,30 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - langfuse_postgres_data:/var/lib/postgresql/data
+
+  # Phase 7, Step 46: agent checkpoints, deliberately NOT inside
+  # langfuse-postgres (plan Q3a): Langfuse keeps its own connection budget,
+  # upgrades and backups, and a checkpoint table bloating (checkpoints.sqlite
+  # reached 227 MB) can't starve Langfuse.
+  checkpoint-postgres:
+    image: docker.io/postgres:17
+    container_name: checkpoint-postgres
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U checkpoints -d checkpoints"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    environment:
+      POSTGRES_USER: checkpoints
+      POSTGRES_PASSWORD: checkpoints
+      POSTGRES_DB: checkpoints
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - "127.0.0.1:${CHECKPOINT_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - checkpoint_postgres_data:/var/lib/postgresql/data
 
   redis:
     image: docker.io/redis:7
@@ -227,4 +257,6 @@ volumes:
   langfuse_clickhouse_data:
     driver: local
   langfuse_clickhouse_logs:
+    driver: local
+  checkpoint_postgres_data:
     driver: local

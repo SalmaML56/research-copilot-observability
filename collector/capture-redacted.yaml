@@ -1,0 +1,6 @@
+# Phase 7, step 45: the default (COLLECTOR_CAPTURE unset or "redacted").
+# otel-collector-config.yaml already is the redacted pipeline set, so this
+# overlay changes nothing. It exists so docker-compose.yml can always pass a
+# second --config; an unknown COLLECTOR_CAPTURE value then names a file that
+# doesn't exist and the collector refuses to start (fails closed).
+{}

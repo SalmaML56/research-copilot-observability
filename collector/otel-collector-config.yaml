@@ -35,7 +35,23 @@ connectors:
     exemplars:
       enabled: true
 
+  # Phase 7, step 44: hands traces from traces/in to traces/sampled. The
+  # split exists so span_metrics (above) keeps seeing 100% of spans while
+  # only trace STORAGE is sampled. With tail_sampling in a single pipeline,
+  # every RED panel and alert would be computed from the sample - and a
+  # biased one (all errors kept, 20% of successes), inflating the tool
+  # error rate up to ~5x.
+  forward/sampling: {}
+
 processors:
+  # Phase 7, step 44: tail sampling buffers every span for decision_wait,
+  # and the container is capped at mem_limit 512m. Refuse data under memory
+  # pressure instead of being OOM-killed and losing everything buffered.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
   gen_ai_normalizer:
     sources:
       - name: openinference
@@ -98,6 +114,92 @@ processors:
           - set(attributes["gen_ai.usage.cost_model"], attributes["gen_ai.request.model"])
             where attributes["gen_ai.usage.cost_usd"] != nil
 
+  # Phase 7, step 45: masks emails, phone numbers and API keys/tokens in
+  # every string attribute (resource, span, span event, log record, metric
+  # datapoint) and in log bodies. Runs in traces/in BEFORE the sampling fork
+  # and span_metrics, so no exporter or derived metric sees the raw values.
+  # ON by default (this file); unredacted capture is the per-env opt-in
+  # collector/capture-full.yaml, selected by COLLECTOR_CAPTURE=full
+  # (docker-compose.yml). Not covered: span names and span status messages
+  # (the processor only reads attributes), and anything that bypasses the
+  # collector - see docs/step45_redaction.md.
+  redaction:
+    # Without this the processor DELETES every attribute not listed in
+    # allowed_keys - i.e. almost the whole span.
+    allow_all_keys: true
+    # KEY looks like a credential -> the whole value becomes "****" (the
+    # attribute is kept, masked; verified on http.request.header.authorization).
+    blocked_key_patterns:
+      - "(?i).*(password|passwd|secret|api[_.-]?key|authorization).*"
+    # Matched substrings are replaced with "****". Checked against real
+    # stored spans/logs (Tempo, Loki) and 540k chars of real run outputs in
+    # data/eval_results before shipping.
+    blocked_values:
+      - "[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}"  # email
+      - "(?:\\+1[\\s.-]?)?\\(?\\b\\d{3}\\)?[\\s.-]\\d{3}[\\s.-]\\d{4}\\b"        # phone, NANP with separators
+      # Phone, international. Country code must be followed by a separator:
+      # a looser "\+\d{1,3}(?:[\s.-]?\d{2,4}){2,5}" matched "+2023 200" in
+      # real log lines (a URL-encoded search query followed by the HTTP
+      # status), found by the pre-ship scan.
+      - "\\+\\d{1,3}[\\s.-]\\d{1,4}(?:[\\s.-]\\d{2,4}){2,4}\\b"
+      - "\\bsk-[A-Za-z0-9_-]{16,}"                     # OpenAI/DeepSeek/Anthropic/Langfuse secret
+      - "\\bpk-lf-[A-Za-z0-9-]{8,}"                    # Langfuse public key
+      - "\\bgsk_[A-Za-z0-9]{20,}"                      # Groq
+      - "\\bAKIA[0-9A-Z]{16}\\b"                       # AWS access key id
+      - "\\bgh[pousr]_[A-Za-z0-9]{36,}"                # GitHub token
+      # Bearer token. Known small over-match: "." is a valid token char, so
+      # a sentence-final period right after the token is masked with it.
+      - "(?i)\\bbearer\\s+[A-Za-z0-9._~+/=-]{16,}"
+    # Adds redaction.masked.count to each touched span/event/log, so a
+    # masked value is visibly masked rather than silently changed. (Key
+    # names are only listed with summary: debug.)
+    summary: info
+
+  # Phase 7, step 44: keep 100% of errored or expensive traces, ~20% of the
+  # rest. Policies are OR'd - any match keeps the whole trace.
+  tail_sampling:
+    # Plan decision (b): 5 min, not the 30 min the longest observed run
+    # (Step 42: 1745s) would need. It is also the delay before a trace is
+    # visible in Tempo. Known trade-off: on a run longer than 5 min, an
+    # error or expensive call AFTER the first 5 min can't change the
+    # decision already made. The session policy is unaffected (its flag is
+    # on every span from the start).
+    decision_wait: 300s
+    num_traces: 20000
+    expected_new_traces_per_sec: 10
+    # Spans of an already-decided trace arriving after decision_wait follow
+    # the cached decision instead of starting a new, partial trace.
+    decision_cache:
+      sampled_cache_size: 100000
+      non_sampled_cache_size: 100000
+    policies:
+      # Exceptions and 5xx. A 4xx leaves span status unset (server-side
+      # semconv), so it is sampled like normal traffic - verified in Tempo.
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      # Plan Q5: any single model call over $0.01. Derived from 38 real
+      # DeepSeek calls (2026-09-23): median $0.00168, max $0.00657. A
+      # percentile of calls would force-keep most runs (13-23 calls each),
+      # so the threshold sits above every normal call: ~30k input tokens in
+      # one call. cost_usd is set by transform/cost in traces/in, before
+      # this pipeline. Float literal on purpose: the attribute is a double.
+      - name: expensive-model-call
+        type: ottl_condition
+        ottl_condition:
+          error_mode: ignore
+          span:
+            - attributes["gen_ai.usage.cost_usd"] != nil and attributes["gen_ai.usage.cost_usd"] > 0.01
+      # Plan Q6b: ~20% of normal traffic, decided per SESSION by the app
+      # (observability/identity.py, TRACE_SESSION_SAMPLE_RATE) so all traces
+      # of one run are kept or dropped together.
+      - name: session-sampled
+        type: boolean_attribute
+        boolean_attribute:
+          key: trace.session_sampled
+          value: true
+
 exporters:
   debug:
     verbosity: detailed
@@ -105,19 +207,32 @@ exporters:
     endpoint: http://grafana-lgtm:4318
 
 service:
+  # Phase 7, step 45: this file is the REDACTED (default) pipeline set. The
+  # debug exporter (verbosity: detailed prints every attribute - whole
+  # prompts and answers - to the container log) is only on traces/logs in
+  # collector/capture-full.yaml, the dev opt-in.
   pipelines:
-    traces:
+    # Phase 7, step 44: split. traces/in sees 100% of spans and feeds
+    # span_metrics; traces/sampled stores the tail-sampled subset.
+    traces/in:
       receivers: [otlp]
-      processors: [gen_ai_normalizer, transform/cost]
-      exporters: [debug, otlp_http/grafana, span_metrics]
+      processors: [memory_limiter, gen_ai_normalizer, transform/cost, redaction]
+      exporters: [span_metrics, forward/sampling]
+    traces/sampled:
+      receivers: [forward/sampling]
+      processors: [tail_sampling]
+      exporters: [otlp_http/grafana]
     metrics:
       # P5-12: the debug exporter is here on purpose. Without it, "no metrics
       # arrived" and "metrics arrived and were dropped downstream" look
-      # identical during bring-up.
+      # identical during bring-up. Step 45: redaction here too - the app's
+      # gen_ai.client.* metrics carry session_id, a client-supplied string.
       receivers: [otlp, span_metrics]
+      processors: [redaction]
       exporters: [debug, otlp_http/grafana]
     # Phase 5, P5-51 (Step 37): there was no logs pipeline at all, which is
     # why Step 31 stayed partial - Loki received nothing.
     logs:
       receivers: [otlp]
-      exporters: [debug, otlp_http/grafana]
+      processors: [redaction]
+      exporters: [otlp_http/grafana]

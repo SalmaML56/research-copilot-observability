@@ -4,6 +4,12 @@ Phase 4, step 30: FastAPI wrapper around the agent.
 POST /research — runs the agent on a given topic.
 POST /research/{thread_id}/approve — approves a paused finalize_report
 call, so the API is actually usable end to end.
+POST /research/{thread_id}/reject — Phase 7, step 48: rejects it, with an
+optional reason. Every pause and decision is recorded in the Postgres
+approval_requests table (observability/approval_queue.py).
+POST /research/stream — Phase 7, step 46: same run as /research, streamed
+as Server-Sent Events; ends with a "status" event shaped like
+ResearchResponse. A pause is approved through the normal /approve.
 POST /research/{thread_id}/feedback — Phase 6, step 43: thumbs up/down on
 a completed response, pushed as a "user_feedback" score onto that
 response's trace.
@@ -13,30 +19,40 @@ Run:
     uv run uvicorn research_copilot.api.main:app --reload
 """
 
+import contextvars
 import json
 import os
+import queue
 import random
+import threading
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from langfuse import get_client
 from opentelemetry import trace
 from pydantic import BaseModel
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-from research_copilot.agents.checkpointed_agent import build_agent, CHECKPOINT_DB_PATH
+from research_copilot.agents.checkpointed_agent import build_agent, create_checkpoint_pool
 from research_copilot.observability.otel_setup import setup_otel_instrumentation
-from research_copilot.observability.identity import set_identity, reset_identity
+from research_copilot.observability.identity import (
+    SESSION_SAMPLED_ATTRIBUTE,
+    reset_identity,
+    session_sampled,
+    set_identity,
+)
 from research_copilot.observability.metrics_setup import (
     setup_metrics_instrumentation,
     GenAIMetricsCallbackHandler,
     record_run_steps,
-    mark_pending_approval,
-    clear_pending_approval,
+    record_approval_decision,
 )
+from research_copilot.observability import approval_queue
 from research_copilot.observability.logging_setup import setup_logging
 from research_copilot.config.settings import settings
 from research_copilot.evals.tool_collector import ToolCollector
@@ -45,8 +61,33 @@ provider = setup_otel_instrumentation()
 setup_metrics_instrumentation()
 log = setup_logging()
 
-app = FastAPI(title="Research Copilot API")
-FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
+# Phase 7, step 46: checkpoints in Postgres through one process-wide pool.
+# The SQLite version opened a fresh connection on every request; with
+# PostgresSaver.from_conn_string() that would be a new TCP connection + auth
+# per request, against a server whose connection limit is finite. Each
+# PostgresSaver only borrows a connection per checkpoint read/write, so
+# the pool can be smaller than the number of concurrent runs.
+CHECKPOINT_POOL_MAX_SIZE = int(os.getenv("CHECKPOINT_POOL_MAX_SIZE", "10"))
+_checkpoint_pool = create_checkpoint_pool(CHECKPOINT_POOL_MAX_SIZE)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _checkpoint_pool.open(wait=True)
+    PostgresSaver(_checkpoint_pool).setup()
+    approval_queue.setup(_checkpoint_pool)
+    try:
+        yield
+    finally:
+        _checkpoint_pool.close()
+
+
+app = FastAPI(title="Research Copilot API", lifespan=lifespan)
+# Phase 7: no per-message ASGI "http send"/"http receive" sub-spans. Each
+# SSE chunk from /research/stream got its own span - 1085 of 1270 spans in
+# one streamed run's trace - and they carried no identity attributes either.
+# The request's root span still records method, route, status and duration.
+FastAPIInstrumentor.instrument_app(app, tracer_provider=provider, exclude_spans=["send", "receive"])
 
 # Step 40: online evals. Langfuse's trace-read API isn't usable in this
 # deployment (self-hosted, v4 "events_only" mode - trace.list/get 404, and
@@ -60,9 +101,10 @@ FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
 ONLINE_EVAL_SAMPLE_RATE = float(os.getenv("ONLINE_EVAL_SAMPLE_RATE", "0.1"))
 ONLINE_SAMPLES_PATH = Path("data/eval_results/online_samples.jsonl")
 # LEAD_AGENT_SYSTEM_PROMPT requires human approval before finalize_report on
-# every run, so research() essentially never returns "completed" directly -
-# confirmed live: 2/2 smoke-test requests paused and completed via /approve
-# instead. web_search happens in research()'s invoke(), before the pause,
+# every run, so research() usually returns "paused_for_approval" - confirmed
+# live: 2/2 smoke-test requests paused and completed via /approve instead.
+# Not always (Phase 7, F48-1): on a one-line question 2 of 3 runs answered
+# directly without calling finalize_report, so without pausing. web_search happens in research()'s invoke(), before the pause,
 # so the sampled ToolCollector's data has to survive to whichever request
 # actually produces "completed" - hence a pending-capture file per
 # thread_id instead of capturing inline in research() alone.
@@ -92,6 +134,13 @@ class ResearchResponse(BaseModel):
     status: str
     answer: str | None = None
     trace_id: str | None = None
+
+
+class RejectRequest(BaseModel):
+    # Plan Q10a. With a reason, the model is told why and may try again
+    # (and pause again). Without one, langchain's HumanInTheLoopMiddleware
+    # tells it not to retry the tool call.
+    reason: str | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -124,6 +173,7 @@ def _begin_request(thread_id: str, user_id: str):
     root_span = trace.get_current_span()
     if root_span.get_span_context().is_valid:
         root_span.set_attribute("session_id", thread_id)
+        root_span.set_attribute(SESSION_SAMPLED_ATTRIBUTE, session_sampled(thread_id))
         root_span.set_attribute("user_id", user_id)
         root_span.set_attribute("prompt_version", settings.prompt_version)
         root_span.set_attribute("environment", settings.environment)
@@ -251,45 +301,147 @@ def research(request: ResearchRequest) -> ResearchResponse:
     sampled = random.random() < ONLINE_EVAL_SAMPLE_RATE
     collector = ToolCollector() if sampled else None
     try:
-        with SqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
-            agent = build_agent(checkpointer)
-            config = {"configurable": {"thread_id": thread_id}}
+        # A new saver per request over the shared pool, never one shared
+        # saver: each PostgresSaver serializes all its DB operations behind
+        # its own lock (see create_checkpoint_pool).
+        agent = build_agent(PostgresSaver(_checkpoint_pool))
+        config = {"configurable": {"thread_id": thread_id}}
 
-            config["callbacks"] = [GenAIMetricsCallbackHandler()]
+        config["callbacks"] = [GenAIMetricsCallbackHandler()]
+        if collector is not None:
+            config["callbacks"].append(collector)
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": request.topic}]},
+            config=config,
+        )
+
+        record_run_steps(_count_planned_steps(result))
+
+        state = agent.get_state(config)
+        if state.next:
+            approval_queue.record_pause(_checkpoint_pool, thread_id)
+            log.info("research paused for approval")
             if collector is not None:
-                config["callbacks"].append(collector)
-            result = agent.invoke(
-                {"messages": [{"role": "user", "content": request.topic}]},
-                config=config,
+                _write_pending_capture(thread_id, request.topic, request.user_id, collector)
+            return ResearchResponse(thread_id=thread_id, status="paused_for_approval")
+
+        log.info("research completed")
+        answer = _extract_text_content(result["messages"][-1].content)
+        trace_id = _current_trace_id()
+        _record_completed_trace(thread_id, trace_id)
+        if collector is not None:
+            _record_online_sample(
+                thread_id, request.topic, request.user_id, answer, collector.search_outputs, collector.tool_calls
             )
-
-            record_run_steps(_count_planned_steps(result))
-
-            state = agent.get_state(config)
-            if state.next:
-                mark_pending_approval(thread_id)
-                log.info("research paused for approval")
-                if collector is not None:
-                    _write_pending_capture(thread_id, request.topic, request.user_id, collector)
-                return ResearchResponse(thread_id=thread_id, status="paused_for_approval")
-
-            clear_pending_approval(thread_id)
-            log.info("research completed")
-            answer = _extract_text_content(result["messages"][-1].content)
-            trace_id = _current_trace_id()
-            _record_completed_trace(thread_id, trace_id)
-            if collector is not None:
-                _record_online_sample(
-                    thread_id, request.topic, request.user_id, answer, collector.search_outputs, collector.tool_calls
-                )
-            return ResearchResponse(
-                thread_id=thread_id,
-                status="completed",
-                answer=answer,
-                trace_id=trace_id,
-            )
+        return ResearchResponse(
+            thread_id=thread_id,
+            status="completed",
+            answer=answer,
+            trace_id=trace_id,
+        )
     finally:
         reset_identity(identity_token)
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _stream_source(namespace: tuple) -> str:
+    """Lead agent, or the subagent path the event came from."""
+    if not namespace:
+        return "lead-agent"
+    return " > ".join(part.split(":")[0] for part in namespace)
+
+
+@app.post("/research/stream")
+def research_stream(request: ResearchRequest) -> StreamingResponse:
+    """
+    Phase 7, step 46: streaming variant of /research, as Server-Sent Events:
+    "token" (model text chunks), "tool_call" (tool names only - args can be
+    whole reports), then one final "status" event with the same fields as
+    ResearchResponse.
+
+    The agent runs on ONE worker thread started under a copy of this
+    handler's context, feeding a queue the response generator drains.
+    Iterating agent.stream() directly inside the generator does not work:
+    Starlette runs each next() of a sync generator in a separate
+    anyio.to_thread.run_sync call, each with a fresh copy of the request
+    context (verified in starlette 1.6.0's iterate_in_threadpool), so the
+    identity ContextVar and the OTel parent span set up here would not be
+    reliably visible to the agent's spans, and spans could start and end in
+    different contexts.
+
+    Not included here, unlike /research: Step 40 online-eval sampling. If
+    the client disconnects, the run still finishes and is checkpointed; it
+    can be approved as usual.
+    """
+    thread_id = request.thread_id or str(uuid.uuid4())
+    identity_token = _begin_request(thread_id, request.user_id)
+    try:
+        log.info("research stream request received", extra={"topic": request.topic})
+        run_context = contextvars.copy_context()
+    finally:
+        reset_identity(identity_token)
+
+    events: queue.Queue[str | None] = queue.Queue()
+
+    def run_agent() -> None:
+        try:
+            agent = build_agent(PostgresSaver(_checkpoint_pool))
+            config = {
+                "configurable": {"thread_id": thread_id},
+                "callbacks": [GenAIMetricsCallbackHandler()],
+            }
+            for namespace, mode, chunk in agent.stream(
+                {"messages": [{"role": "user", "content": request.topic}]},
+                config=config,
+                stream_mode=["updates", "messages"],
+                subgraphs=True,
+            ):
+                source = _stream_source(namespace)
+                if mode == "messages":
+                    text = _extract_text_content(getattr(chunk[0], "content", ""))
+                    if text:
+                        events.put(_sse("token", {"source": source, "text": text}))
+                elif mode == "updates":
+                    for node_output in chunk.values():
+                        if not isinstance(node_output, dict):
+                            continue
+                        for message in node_output.get("messages") or []:
+                            for tool_call in getattr(message, "tool_calls", None) or []:
+                                events.put(_sse("tool_call", {"source": source, "name": tool_call.get("name")}))
+
+            state = agent.get_state(config)
+            record_run_steps(len(state.values.get("todos") or []))
+            if state.next:
+                approval_queue.record_pause(_checkpoint_pool, thread_id)
+                log.info("research paused for approval")
+                response = ResearchResponse(thread_id=thread_id, status="paused_for_approval")
+            else:
+                log.info("research completed")
+                trace_id = _current_trace_id()
+                _record_completed_trace(thread_id, trace_id)
+                response = ResearchResponse(
+                    thread_id=thread_id,
+                    status="completed",
+                    answer=_extract_text_content(state.values["messages"][-1].content),
+                    trace_id=trace_id,
+                )
+            events.put(_sse("status", response.model_dump()))
+        except Exception as exc:
+            log.exception("research stream failed")
+            events.put(_sse("error", {"thread_id": thread_id, "error": repr(exc)}))
+        finally:
+            events.put(None)
+
+    threading.Thread(target=run_context.run, args=(run_agent,), daemon=True).start()
+
+    def drain():
+        while (item := events.get()) is not None:
+            yield item
+
+    return StreamingResponse(drain(), media_type="text/event-stream")
 
 
 @app.post("/research/{thread_id}/approve", response_model=ResearchResponse)
@@ -299,59 +451,81 @@ def approve(thread_id: str) -> ResearchResponse:
     Resume shape verified from langchain's HumanInTheLoopMiddleware source:
     Command(resume={"decisions": [{"type": "approve"}]}).
     """
+    return _resume(thread_id, {"type": "approve"}, reason=None)
+
+
+@app.post("/research/{thread_id}/reject", response_model=ResearchResponse)
+def reject(thread_id: str, request: RejectRequest | None = None) -> ResearchResponse:
+    """
+    Phase 7, step 48: rejects a paused finalize_report call. The graph
+    resumes either way: the model gets a rejection ToolMessage and carries
+    on, so the response can be "completed" or "paused_for_approval" again.
+    """
+    reason = request.reason if request is not None else None
+    decision = {"type": "reject"}
+    if reason:
+        decision["message"] = reason
+    return _resume(thread_id, decision, reason=reason)
+
+
+def _resume(thread_id: str, decision: dict, reason: str | None) -> ResearchResponse:
     identity_token = _begin_request(thread_id, "unknown")
-    log.info("approval request received")
+    log.info("approval decision received", extra={"decision": decision["type"]})
     try:
-        with SqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
-            agent = build_agent(checkpointer)
-            config = {"configurable": {"thread_id": thread_id}}
+        # Per-request saver, same reason as in research().
+        agent = build_agent(PostgresSaver(_checkpoint_pool))
+        config = {"configurable": {"thread_id": thread_id}}
 
-            state = agent.get_state(config)
-            if not state.next:
-                clear_pending_approval(thread_id)
-                raise HTTPException(
-                    status_code=400,
-                    detail="No pending approval found on this thread_id.",
-                )
-
-            config["callbacks"] = [GenAIMetricsCallbackHandler()]
-            result = agent.invoke(
-                Command(resume={"decisions": [{"type": "approve"}]}),
-                config=config,
+        state = agent.get_state(config)
+        if not state.next:
+            raise HTTPException(
+                status_code=400,
+                detail="No pending approval found on this thread_id.",
             )
 
-            # Step 30 fix: a resume can trigger another pending interrupt
-            # (e.g. a second approval-gated tool call). Re-check state
-            # instead of unconditionally reporting completed.
-            record_run_steps(_count_planned_steps(result))
+        # Phase 7, step 48: the decision is recorded when the human makes
+        # it, before the resumed run (minutes of model calls) - that run's
+        # duration is not approval wait.
+        wait_seconds = approval_queue.record_decision(_checkpoint_pool, thread_id, decision["type"], reason)
+        record_approval_decision(decision["type"], wait_seconds)
 
-            new_state = agent.get_state(config)
-            if new_state.next:
-                mark_pending_approval(thread_id)
-                log.info("still paused: another approval is pending")
-                return ResearchResponse(thread_id=thread_id, status="paused_for_approval")
+        config["callbacks"] = [GenAIMetricsCallbackHandler()]
+        result = agent.invoke(
+            Command(resume={"decisions": [decision]}),
+            config=config,
+        )
 
-            clear_pending_approval(thread_id)
-            log.info("run completed after approval")
-            answer = _extract_text_content(result["messages"][-1].content)
-            trace_id = _current_trace_id()
-            _record_completed_trace(thread_id, trace_id)
-            pending = _pop_pending_capture(thread_id)
-            if pending is not None:
-                _record_online_sample(
-                    thread_id,
-                    pending["prompt"],
-                    pending["user_id"],
-                    answer,
-                    pending["retrieval_context"],
-                    pending["tool_calls"],
-                )
-            return ResearchResponse(
-                thread_id=thread_id,
-                status="completed",
-                answer=answer,
-                trace_id=trace_id,
+        # Step 30 fix: a resume can trigger another pending interrupt
+        # (e.g. a second approval-gated tool call). Re-check state
+        # instead of unconditionally reporting completed.
+        record_run_steps(_count_planned_steps(result))
+
+        new_state = agent.get_state(config)
+        if new_state.next:
+            approval_queue.record_pause(_checkpoint_pool, thread_id)
+            log.info("still paused: another approval is pending")
+            return ResearchResponse(thread_id=thread_id, status="paused_for_approval")
+
+        log.info("run completed after approval decision")
+        answer = _extract_text_content(result["messages"][-1].content)
+        trace_id = _current_trace_id()
+        _record_completed_trace(thread_id, trace_id)
+        pending = _pop_pending_capture(thread_id)
+        if pending is not None:
+            _record_online_sample(
+                thread_id,
+                pending["prompt"],
+                pending["user_id"],
+                answer,
+                pending["retrieval_context"],
+                pending["tool_calls"],
             )
+        return ResearchResponse(
+            thread_id=thread_id,
+            status="completed",
+            answer=answer,
+            trace_id=trace_id,
+        )
     finally:
         reset_identity(identity_token)
 

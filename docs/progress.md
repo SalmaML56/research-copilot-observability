@@ -1,8 +1,67 @@
 # docs/progress.md
 
 ## Current phase and branch
-Phase: 6 — Evaluation framework (DONE, 2026-09-22)
-Branch: phase-6/evaluation-framework
+Phase: 7 — Production hardening (DONE, 2026-09-23)
+Branch: phase-7/production-hardening
+
+## Phase 7 — Production hardening — DONE (2026-09-23)
+
+Plan and decisions (Q1–Q13): `docs/phase7_plan.md`. Order used: 46 → 44 →
+45 → 48 → 47 (Q11).
+
+- Step 46 — Postgres checkpoints + streaming. A dedicated
+  `checkpoint-postgres` service (not `langfuse-postgres`, Q3a).
+  `SqliteSaver` → sync `PostgresSaver` over one process-wide psycopg pool,
+  with a new saver per request (each saver serializes its I/O behind its own lock).
+  `POST /research/stream` (SSE). The checkpoint-size gauge now reads the Postgres
+  tables. LangGraph Server was skipped: `langgraph up` needs a LangSmith key or licence
+  (Q1c/Q2b). Verified: pause, `kill -9`, fresh process, `/approve` completed.
+  **Real finding:** the ASGI instrumentation made one `http send` span per SSE
+  chunk (1085 of 1270 spans in one streamed run, none carrying identity),
+  so those spans are now excluded. **Real finding:** iterating
+  `agent.stream()` inside a Starlette sync generator loses the identity
+  ContextVar/OTel parent between chunks (each `next()` runs in a fresh
+  context copy), so the agent runs on one worker thread under a copied context.
+- Step 44 — tail sampling. `traces/in` (100% of spans → `span_metrics`) is forwarded
+  to `traces/sampled` (`tail_sampling` → Tempo). It keeps every error, every model call
+  over **$0.01** (derived from 38 real DeepSeek calls: median $0.00168, max
+  $0.00657), and ~20% of sessions, decided per session in the app
+  (`trace.session_sampled`). `decision_wait` 5 min. `memory_limiter` added.
+  Verified: error trace kept, fake $0.02 span kept (control $0.005 dropped), 8/50
+  normal runs kept = exactly the predicted sessions, `span_metrics` count
+  50/50. **Real findings:** a single pipeline would have biased every RED
+  metric (error rate up to ~5x), and per-trace sampling keeps a whole
+  run only ~4% of the time. Runs longer than 5 min can't change a decision
+  already made (accepted trade-off). Full write-up: `docs/step44_tail_sampling.md`.
+- Step 45 — redaction. The collector's `redaction` processor masks emails,
+  phones and API keys/tokens in traces (before the sampling fork),
+  logs and metrics. **On by default.** `COLLECTOR_CAPTURE=full` is the
+  unredacted dev opt-in, and an unknown value fails closed. `debug` is only on
+  traces/logs in full mode. Verified with a real `/research` run and synthetic
+  span/log carrying fake PII: 0 raw hits in Tempo, Loki, Prometheus labels
+  and the collector log. All present in full mode. **Real finding, caught by
+  scanning real stored data before shipping:** the first intl-phone regex matched
+  `+2023 200` in real httpx log lines. Also: full mode put a raw email
+  into a Prometheus label (via `span_metrics`), which persists afterwards. Gaps documented:
+  checkpoint DB, eval files, direct-Langfuse mode, **the app's own stdout
+  log** (found in the test run), span names. `docs/step45_redaction.md`.
+- Step 48 — approval queue metrics. `POST /research/{id}/reject` with an optional
+  reason. One `approval_requests` row per pause in Postgres (DB-clock
+  `paused_at`/`decided_at`). New metrics `approval.wait_seconds{decision}` and
+  `approval.decisions{decision}`, with the rejection rate counted per decision. The
+  pending gauge now reads the table (it used to be an in-process set, reset on restart). New dashboard row.
+  Verified with 3 real runs and an app restart between pause and decision:
+  DB waits match client-side expected waits, Prometheus sums match, rejection rate
+  0.5 = 2/4, and the gauge stayed 3 across the restart. **Real finding:** on a one-line
+  question the model skipped `finalize_report` in 2 of 3 runs, so there was no pause.
+  The approval gate is enforced only by the prompt (not fixed, it's a product decision).
+  `docs/step48_approval_queue.md`.
+- Step 47 — load test. `scripts/load_test.py` + `MODEL_PROFILE=stub`
+  (a scripted model through the real graph, Q8c), with sessions kept at 100% (Q9a).
+  Automated check of Tempo spans, Loki logs, checkpoint rows and approval
+  rows for any other session's id/marker. 20/20 stub sessions and 5/5 real
+  DeepSeek sessions completed concurrently: **0 leakage problems**, collector
+  peak 94 MiB of 512 MiB. `docs/step47_load_test.md`.
 
 ## Phase 6 — Evaluation framework — DONE (2026-09-22)
 
