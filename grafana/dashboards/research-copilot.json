@@ -595,6 +595,90 @@
           "legendFormat": "checkpoints.sqlite"
         }
       ]
+    },
+    {
+      "type": "row",
+      "title": "Approval queue",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      },
+      "collapsed": false
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Approval wait (paused -> decided), p50 / p95",
+      "description": "Phase 7, step 48. research_copilot.approval.wait_seconds: from the run pausing on finalize_report to the human's approve/reject. paused_at lives in Postgres (approval_requests), so an app restart in between doesn't lose or reset the wait. Recorded when the decision arrives, not when the resumed run finishes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 39
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(research_copilot_approval_wait_seconds_bucket[$__rate_interval])))"
+        },
+        {
+          "refId": "B",
+          "editorMode": "code",
+          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(research_copilot_approval_wait_seconds_bucket[$__rate_interval])))"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Rejection rate (per decision)",
+      "description": "Phase 7, step 48. reject / (approve + reject) over the dashboard range, counted per DECISION, not per run: a reject with a reason lets the model retry and pause again, so one run can produce several decisions. Also queryable exactly from Postgres: SELECT avg((decision = 'reject')::int) FROM approval_requests WHERE decided_at IS NOT NULL.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 39
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "sum(increase(research_copilot_approval_decisions_total{decision=\"reject\"}[$__range])) / sum(increase(research_copilot_approval_decisions_total[$__range]))"
+        }
+      ]
     }
   ]
 }

@@ -4,6 +4,9 @@ Phase 4, step 30: FastAPI wrapper around the agent.
 POST /research — runs the agent on a given topic.
 POST /research/{thread_id}/approve — approves a paused finalize_report
 call, so the API is actually usable end to end.
+POST /research/{thread_id}/reject — Phase 7, step 48: rejects it, with an
+optional reason. Every pause and decision is recorded in the Postgres
+approval_requests table (observability/approval_queue.py).
 POST /research/stream — Phase 7, step 46: same run as /research, streamed
 as Server-Sent Events; ends with a "status" event shaped like
 ResearchResponse. A pause is approved through the normal /approve.
@@ -47,9 +50,9 @@ from research_copilot.observability.metrics_setup import (
     setup_metrics_instrumentation,
     GenAIMetricsCallbackHandler,
     record_run_steps,
-    mark_pending_approval,
-    clear_pending_approval,
+    record_approval_decision,
 )
+from research_copilot.observability import approval_queue
 from research_copilot.observability.logging_setup import setup_logging
 from research_copilot.config.settings import settings
 from research_copilot.evals.tool_collector import ToolCollector
@@ -72,6 +75,7 @@ _checkpoint_pool = create_checkpoint_pool(CHECKPOINT_POOL_MAX_SIZE)
 async def lifespan(app: FastAPI):
     _checkpoint_pool.open(wait=True)
     PostgresSaver(_checkpoint_pool).setup()
+    approval_queue.setup(_checkpoint_pool)
     try:
         yield
     finally:
@@ -97,9 +101,10 @@ FastAPIInstrumentor.instrument_app(app, tracer_provider=provider, exclude_spans=
 ONLINE_EVAL_SAMPLE_RATE = float(os.getenv("ONLINE_EVAL_SAMPLE_RATE", "0.1"))
 ONLINE_SAMPLES_PATH = Path("data/eval_results/online_samples.jsonl")
 # LEAD_AGENT_SYSTEM_PROMPT requires human approval before finalize_report on
-# every run, so research() essentially never returns "completed" directly -
-# confirmed live: 2/2 smoke-test requests paused and completed via /approve
-# instead. web_search happens in research()'s invoke(), before the pause,
+# every run, so research() usually returns "paused_for_approval" - confirmed
+# live: 2/2 smoke-test requests paused and completed via /approve instead.
+# Not always (Phase 7, F48-1): on a one-line question 2 of 3 runs answered
+# directly without calling finalize_report, so without pausing. web_search happens in research()'s invoke(), before the pause,
 # so the sampled ToolCollector's data has to survive to whichever request
 # actually produces "completed" - hence a pending-capture file per
 # thread_id instead of capturing inline in research() alone.
@@ -129,6 +134,13 @@ class ResearchResponse(BaseModel):
     status: str
     answer: str | None = None
     trace_id: str | None = None
+
+
+class RejectRequest(BaseModel):
+    # Plan Q10a. With a reason, the model is told why and may try again
+    # (and pause again). Without one, langchain's HumanInTheLoopMiddleware
+    # tells it not to retry the tool call.
+    reason: str | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -307,13 +319,12 @@ def research(request: ResearchRequest) -> ResearchResponse:
 
         state = agent.get_state(config)
         if state.next:
-            mark_pending_approval(thread_id)
+            approval_queue.record_pause(_checkpoint_pool, thread_id)
             log.info("research paused for approval")
             if collector is not None:
                 _write_pending_capture(thread_id, request.topic, request.user_id, collector)
             return ResearchResponse(thread_id=thread_id, status="paused_for_approval")
 
-        clear_pending_approval(thread_id)
         log.info("research completed")
         answer = _extract_text_content(result["messages"][-1].content)
         trace_id = _current_trace_id()
@@ -404,11 +415,10 @@ def research_stream(request: ResearchRequest) -> StreamingResponse:
             state = agent.get_state(config)
             record_run_steps(len(state.values.get("todos") or []))
             if state.next:
-                mark_pending_approval(thread_id)
+                approval_queue.record_pause(_checkpoint_pool, thread_id)
                 log.info("research paused for approval")
                 response = ResearchResponse(thread_id=thread_id, status="paused_for_approval")
             else:
-                clear_pending_approval(thread_id)
                 log.info("research completed")
                 trace_id = _current_trace_id()
                 _record_completed_trace(thread_id, trace_id)
@@ -441,8 +451,26 @@ def approve(thread_id: str) -> ResearchResponse:
     Resume shape verified from langchain's HumanInTheLoopMiddleware source:
     Command(resume={"decisions": [{"type": "approve"}]}).
     """
+    return _resume(thread_id, {"type": "approve"}, reason=None)
+
+
+@app.post("/research/{thread_id}/reject", response_model=ResearchResponse)
+def reject(thread_id: str, request: RejectRequest | None = None) -> ResearchResponse:
+    """
+    Phase 7, step 48: rejects a paused finalize_report call. The graph
+    resumes either way: the model gets a rejection ToolMessage and carries
+    on, so the response can be "completed" or "paused_for_approval" again.
+    """
+    reason = request.reason if request is not None else None
+    decision = {"type": "reject"}
+    if reason:
+        decision["message"] = reason
+    return _resume(thread_id, decision, reason=reason)
+
+
+def _resume(thread_id: str, decision: dict, reason: str | None) -> ResearchResponse:
     identity_token = _begin_request(thread_id, "unknown")
-    log.info("approval request received")
+    log.info("approval decision received", extra={"decision": decision["type"]})
     try:
         # Per-request saver, same reason as in research().
         agent = build_agent(PostgresSaver(_checkpoint_pool))
@@ -450,15 +478,20 @@ def approve(thread_id: str) -> ResearchResponse:
 
         state = agent.get_state(config)
         if not state.next:
-            clear_pending_approval(thread_id)
             raise HTTPException(
                 status_code=400,
                 detail="No pending approval found on this thread_id.",
             )
 
+        # Phase 7, step 48: the decision is recorded when the human makes
+        # it, before the resumed run (minutes of model calls) - that run's
+        # duration is not approval wait.
+        wait_seconds = approval_queue.record_decision(_checkpoint_pool, thread_id, decision["type"], reason)
+        record_approval_decision(decision["type"], wait_seconds)
+
         config["callbacks"] = [GenAIMetricsCallbackHandler()]
         result = agent.invoke(
-            Command(resume={"decisions": [{"type": "approve"}]}),
+            Command(resume={"decisions": [decision]}),
             config=config,
         )
 
@@ -469,12 +502,11 @@ def approve(thread_id: str) -> ResearchResponse:
 
         new_state = agent.get_state(config)
         if new_state.next:
-            mark_pending_approval(thread_id)
+            approval_queue.record_pause(_checkpoint_pool, thread_id)
             log.info("still paused: another approval is pending")
             return ResearchResponse(thread_id=thread_id, status="paused_for_approval")
 
-        clear_pending_approval(thread_id)
-        log.info("run completed after approval")
+        log.info("run completed after approval decision")
         answer = _extract_text_content(result["messages"][-1].content)
         trace_id = _current_trace_id()
         _record_completed_trace(thread_id, trace_id)
