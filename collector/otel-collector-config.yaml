@@ -35,7 +35,23 @@ connectors:
     exemplars:
       enabled: true
 
+  # Phase 7, step 44: hands traces from traces/in to traces/sampled. The
+  # split exists so span_metrics (above) keeps seeing 100% of spans while
+  # only trace STORAGE is sampled. With tail_sampling in a single pipeline,
+  # every RED panel and alert would be computed from the sample - and a
+  # biased one (all errors kept, 20% of successes), inflating the tool
+  # error rate up to ~5x.
+  forward/sampling: {}
+
 processors:
+  # Phase 7, step 44: tail sampling buffers every span for decision_wait,
+  # and the container is capped at mem_limit 512m. Refuse data under memory
+  # pressure instead of being OOM-killed and losing everything buffered.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
   gen_ai_normalizer:
     sources:
       - name: openinference
@@ -98,6 +114,51 @@ processors:
           - set(attributes["gen_ai.usage.cost_model"], attributes["gen_ai.request.model"])
             where attributes["gen_ai.usage.cost_usd"] != nil
 
+  # Phase 7, step 44: keep 100% of errored or expensive traces, ~20% of the
+  # rest. Policies are OR'd - any match keeps the whole trace.
+  tail_sampling:
+    # Plan decision (b): 5 min, not the 30 min the longest observed run
+    # (Step 42: 1745s) would need. It is also the delay before a trace is
+    # visible in Tempo. Known trade-off: on a run longer than 5 min, an
+    # error or expensive call AFTER the first 5 min can't change the
+    # decision already made. The session policy is unaffected (its flag is
+    # on every span from the start).
+    decision_wait: 300s
+    num_traces: 20000
+    expected_new_traces_per_sec: 10
+    # Spans of an already-decided trace arriving after decision_wait follow
+    # the cached decision instead of starting a new, partial trace.
+    decision_cache:
+      sampled_cache_size: 100000
+      non_sampled_cache_size: 100000
+    policies:
+      # Exceptions and 5xx. A 4xx leaves span status unset (server-side
+      # semconv), so it is sampled like normal traffic - verified in Tempo.
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      # Plan Q5: any single model call over $0.01. Derived from 38 real
+      # DeepSeek calls (2026-09-23): median $0.00168, max $0.00657. A
+      # percentile of calls would force-keep most runs (13-23 calls each),
+      # so the threshold sits above every normal call: ~30k input tokens in
+      # one call. cost_usd is set by transform/cost in traces/in, before
+      # this pipeline. Float literal on purpose: the attribute is a double.
+      - name: expensive-model-call
+        type: ottl_condition
+        ottl_condition:
+          error_mode: ignore
+          span:
+            - attributes["gen_ai.usage.cost_usd"] != nil and attributes["gen_ai.usage.cost_usd"] > 0.01
+      # Plan Q6b: ~20% of normal traffic, decided per SESSION by the app
+      # (observability/identity.py, TRACE_SESSION_SAMPLE_RATE) so all traces
+      # of one run are kept or dropped together.
+      - name: session-sampled
+        type: boolean_attribute
+        boolean_attribute:
+          key: trace.session_sampled
+          value: true
+
 exporters:
   debug:
     verbosity: detailed
@@ -106,10 +167,16 @@ exporters:
 
 service:
   pipelines:
-    traces:
+    # Phase 7, step 44: split. traces/in sees 100% of spans and feeds
+    # span_metrics; traces/sampled stores the tail-sampled subset.
+    traces/in:
       receivers: [otlp]
-      processors: [gen_ai_normalizer, transform/cost]
-      exporters: [debug, otlp_http/grafana, span_metrics]
+      processors: [memory_limiter, gen_ai_normalizer, transform/cost]
+      exporters: [span_metrics, forward/sampling]
+    traces/sampled:
+      receivers: [forward/sampling]
+      processors: [tail_sampling]
+      exporters: [debug, otlp_http/grafana]
     metrics:
       # P5-12: the debug exporter is here on purpose. Without it, "no metrics
       # arrived" and "metrics arrived and were dropped downstream" look

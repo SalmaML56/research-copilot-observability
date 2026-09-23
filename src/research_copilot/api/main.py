@@ -37,7 +37,12 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from research_copilot.agents.checkpointed_agent import build_agent, create_checkpoint_pool
 from research_copilot.observability.otel_setup import setup_otel_instrumentation
-from research_copilot.observability.identity import set_identity, reset_identity
+from research_copilot.observability.identity import (
+    SESSION_SAMPLED_ATTRIBUTE,
+    reset_identity,
+    session_sampled,
+    set_identity,
+)
 from research_copilot.observability.metrics_setup import (
     setup_metrics_instrumentation,
     GenAIMetricsCallbackHandler,
@@ -156,6 +161,7 @@ def _begin_request(thread_id: str, user_id: str):
     root_span = trace.get_current_span()
     if root_span.get_span_context().is_valid:
         root_span.set_attribute("session_id", thread_id)
+        root_span.set_attribute(SESSION_SAMPLED_ATTRIBUTE, session_sampled(thread_id))
         root_span.set_attribute("user_id", user_id)
         root_span.set_attribute("prompt_version", settings.prompt_version)
         root_span.set_attribute("environment", settings.environment)
