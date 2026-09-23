@@ -12,18 +12,17 @@ Run:
     uv run python -m research_copilot.agents.run_interrupt_demo
 """
 
-from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
 from research_copilot.agents.checkpointed_agent import (
     build_agent,
     THREAD_ID,
-    CHECKPOINT_DB_PATH,
+    open_checkpointer,
 )
 
 
 def main() -> None:
-    with SqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
+    with open_checkpointer() as checkpointer:
         agent = build_agent(checkpointer)
         config = {"configurable": {"thread_id": THREAD_ID}}
 

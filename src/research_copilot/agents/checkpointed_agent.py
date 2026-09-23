@@ -1,6 +1,10 @@
 """
 Phase 1, step 9: checkpointer (SQLite). Confirmed working.
 
+Phase 7, step 46: checkpoints moved from SQLite to Postgres (the dedicated
+checkpoint-postgres service, docs/phase7_plan.md Q3a). The old
+checkpoints.sqlite is left on disk untouched; nothing was migrated (Q4a).
+
 Phase 1, step 10: human-in-the-loop pause via create_deep_agent's native
 interrupt_on parameter. Verified end to end with THREAD_ID
 "phase1-step10-demo-thread-v2" (v1 thread was left in a confused state by
@@ -10,9 +14,13 @@ Run to trigger the pause:
     uv run python -m research_copilot.agents.checkpointed_agent "Research small modular nuclear reactors and write a short report."
 """
 
+import os
 import sys
+from contextlib import contextmanager
 
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres import PostgresSaver
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 from deepagents import create_deep_agent
 from langchain.agents.middleware import TodoListMiddleware
 
@@ -29,7 +37,42 @@ from research_copilot.observability.logging_setup import setup_logging, flush_lo
 settings.validate()
 
 THREAD_ID = "phase1-step10-demo-thread-v2"
-CHECKPOINT_DB_PATH = "checkpoints.sqlite"
+CHECKPOINT_DB_URI = os.getenv(
+    "CHECKPOINT_DB_URI", "postgresql://checkpoints:checkpoints@localhost:5433/checkpoints"
+)
+# PostgresSaver needs these on every connection: autocommit because setup()
+# runs CREATE INDEX CONCURRENTLY, dict_row because it reads rows by column
+# name. Same values its own from_conn_string() uses - a pool built without
+# them breaks the saver.
+CHECKPOINT_CONN_KWARGS = {"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row}
+
+
+@contextmanager
+def open_checkpointer():
+    """Short-lived processes (this CLI, the Phase 1 demos): one connection
+    for the life of the process. setup() is idempotent - it only applies
+    migrations the database hasn't seen yet."""
+    with PostgresSaver.from_conn_string(CHECKPOINT_DB_URI) as checkpointer:
+        checkpointer.setup()
+        yield checkpointer
+
+
+def create_checkpoint_pool(max_size: int) -> ConnectionPool:
+    """Long-running processes (the API). Created closed; the caller opens it.
+
+    Callers build a new PostgresSaver(pool) per request rather than sharing
+    one: each PostgresSaver holds its own threading.Lock around every DB
+    operation (verified in its source), so a single shared saver would
+    serialize every concurrent session's checkpoint I/O. The saver only
+    borrows a pool connection per operation, so the pool can stay smaller
+    than the number of concurrent runs."""
+    return ConnectionPool(
+        CHECKPOINT_DB_URI,
+        min_size=1,
+        max_size=max_size,
+        kwargs=CHECKPOINT_CONN_KWARGS,
+        open=False,
+    )
 
 
 def build_agent(checkpointer):
@@ -58,7 +101,7 @@ def main() -> None:
 
     user_message = sys.argv[1]
 
-    with SqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
+    with open_checkpointer() as checkpointer:
         agent = build_agent(checkpointer)
         config = {"configurable": {"thread_id": THREAD_ID}}
 

@@ -17,17 +17,18 @@ import json
 import os
 import random
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from langfuse import get_client
 from opentelemetry import trace
 from pydantic import BaseModel
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-from research_copilot.agents.checkpointed_agent import build_agent, CHECKPOINT_DB_PATH
+from research_copilot.agents.checkpointed_agent import build_agent, create_checkpoint_pool
 from research_copilot.observability.otel_setup import setup_otel_instrumentation
 from research_copilot.observability.identity import set_identity, reset_identity
 from research_copilot.observability.metrics_setup import (
@@ -45,7 +46,27 @@ provider = setup_otel_instrumentation()
 setup_metrics_instrumentation()
 log = setup_logging()
 
-app = FastAPI(title="Research Copilot API")
+# Phase 7, step 46: checkpoints in Postgres through one process-wide pool.
+# The SQLite version opened a fresh connection on every request; with
+# PostgresSaver.from_conn_string() that would be a new TCP connection + auth
+# per request, against a server whose connection limit is finite. Each
+# PostgresSaver only borrows a connection per checkpoint read/write, so
+# the pool can be smaller than the number of concurrent runs.
+CHECKPOINT_POOL_MAX_SIZE = int(os.getenv("CHECKPOINT_POOL_MAX_SIZE", "10"))
+_checkpoint_pool = create_checkpoint_pool(CHECKPOINT_POOL_MAX_SIZE)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _checkpoint_pool.open(wait=True)
+    PostgresSaver(_checkpoint_pool).setup()
+    try:
+        yield
+    finally:
+        _checkpoint_pool.close()
+
+
+app = FastAPI(title="Research Copilot API", lifespan=lifespan)
 FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
 
 # Step 40: online evals. Langfuse's trace-read API isn't usable in this
@@ -251,43 +272,45 @@ def research(request: ResearchRequest) -> ResearchResponse:
     sampled = random.random() < ONLINE_EVAL_SAMPLE_RATE
     collector = ToolCollector() if sampled else None
     try:
-        with SqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
-            agent = build_agent(checkpointer)
-            config = {"configurable": {"thread_id": thread_id}}
+        # A new saver per request over the shared pool, never one shared
+        # saver: each PostgresSaver serializes all its DB operations behind
+        # its own lock (see create_checkpoint_pool).
+        agent = build_agent(PostgresSaver(_checkpoint_pool))
+        config = {"configurable": {"thread_id": thread_id}}
 
-            config["callbacks"] = [GenAIMetricsCallbackHandler()]
+        config["callbacks"] = [GenAIMetricsCallbackHandler()]
+        if collector is not None:
+            config["callbacks"].append(collector)
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": request.topic}]},
+            config=config,
+        )
+
+        record_run_steps(_count_planned_steps(result))
+
+        state = agent.get_state(config)
+        if state.next:
+            mark_pending_approval(thread_id)
+            log.info("research paused for approval")
             if collector is not None:
-                config["callbacks"].append(collector)
-            result = agent.invoke(
-                {"messages": [{"role": "user", "content": request.topic}]},
-                config=config,
+                _write_pending_capture(thread_id, request.topic, request.user_id, collector)
+            return ResearchResponse(thread_id=thread_id, status="paused_for_approval")
+
+        clear_pending_approval(thread_id)
+        log.info("research completed")
+        answer = _extract_text_content(result["messages"][-1].content)
+        trace_id = _current_trace_id()
+        _record_completed_trace(thread_id, trace_id)
+        if collector is not None:
+            _record_online_sample(
+                thread_id, request.topic, request.user_id, answer, collector.search_outputs, collector.tool_calls
             )
-
-            record_run_steps(_count_planned_steps(result))
-
-            state = agent.get_state(config)
-            if state.next:
-                mark_pending_approval(thread_id)
-                log.info("research paused for approval")
-                if collector is not None:
-                    _write_pending_capture(thread_id, request.topic, request.user_id, collector)
-                return ResearchResponse(thread_id=thread_id, status="paused_for_approval")
-
-            clear_pending_approval(thread_id)
-            log.info("research completed")
-            answer = _extract_text_content(result["messages"][-1].content)
-            trace_id = _current_trace_id()
-            _record_completed_trace(thread_id, trace_id)
-            if collector is not None:
-                _record_online_sample(
-                    thread_id, request.topic, request.user_id, answer, collector.search_outputs, collector.tool_calls
-                )
-            return ResearchResponse(
-                thread_id=thread_id,
-                status="completed",
-                answer=answer,
-                trace_id=trace_id,
-            )
+        return ResearchResponse(
+            thread_id=thread_id,
+            status="completed",
+            answer=answer,
+            trace_id=trace_id,
+        )
     finally:
         reset_identity(identity_token)
 
@@ -302,56 +325,56 @@ def approve(thread_id: str) -> ResearchResponse:
     identity_token = _begin_request(thread_id, "unknown")
     log.info("approval request received")
     try:
-        with SqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
-            agent = build_agent(checkpointer)
-            config = {"configurable": {"thread_id": thread_id}}
+        # Per-request saver, same reason as in research().
+        agent = build_agent(PostgresSaver(_checkpoint_pool))
+        config = {"configurable": {"thread_id": thread_id}}
 
-            state = agent.get_state(config)
-            if not state.next:
-                clear_pending_approval(thread_id)
-                raise HTTPException(
-                    status_code=400,
-                    detail="No pending approval found on this thread_id.",
-                )
-
-            config["callbacks"] = [GenAIMetricsCallbackHandler()]
-            result = agent.invoke(
-                Command(resume={"decisions": [{"type": "approve"}]}),
-                config=config,
-            )
-
-            # Step 30 fix: a resume can trigger another pending interrupt
-            # (e.g. a second approval-gated tool call). Re-check state
-            # instead of unconditionally reporting completed.
-            record_run_steps(_count_planned_steps(result))
-
-            new_state = agent.get_state(config)
-            if new_state.next:
-                mark_pending_approval(thread_id)
-                log.info("still paused: another approval is pending")
-                return ResearchResponse(thread_id=thread_id, status="paused_for_approval")
-
+        state = agent.get_state(config)
+        if not state.next:
             clear_pending_approval(thread_id)
-            log.info("run completed after approval")
-            answer = _extract_text_content(result["messages"][-1].content)
-            trace_id = _current_trace_id()
-            _record_completed_trace(thread_id, trace_id)
-            pending = _pop_pending_capture(thread_id)
-            if pending is not None:
-                _record_online_sample(
-                    thread_id,
-                    pending["prompt"],
-                    pending["user_id"],
-                    answer,
-                    pending["retrieval_context"],
-                    pending["tool_calls"],
-                )
-            return ResearchResponse(
-                thread_id=thread_id,
-                status="completed",
-                answer=answer,
-                trace_id=trace_id,
+            raise HTTPException(
+                status_code=400,
+                detail="No pending approval found on this thread_id.",
             )
+
+        config["callbacks"] = [GenAIMetricsCallbackHandler()]
+        result = agent.invoke(
+            Command(resume={"decisions": [{"type": "approve"}]}),
+            config=config,
+        )
+
+        # Step 30 fix: a resume can trigger another pending interrupt
+        # (e.g. a second approval-gated tool call). Re-check state
+        # instead of unconditionally reporting completed.
+        record_run_steps(_count_planned_steps(result))
+
+        new_state = agent.get_state(config)
+        if new_state.next:
+            mark_pending_approval(thread_id)
+            log.info("still paused: another approval is pending")
+            return ResearchResponse(thread_id=thread_id, status="paused_for_approval")
+
+        clear_pending_approval(thread_id)
+        log.info("run completed after approval")
+        answer = _extract_text_content(result["messages"][-1].content)
+        trace_id = _current_trace_id()
+        _record_completed_trace(thread_id, trace_id)
+        pending = _pop_pending_capture(thread_id)
+        if pending is not None:
+            _record_online_sample(
+                thread_id,
+                pending["prompt"],
+                pending["user_id"],
+                answer,
+                pending["retrieval_context"],
+                pending["tool_calls"],
+            )
+        return ResearchResponse(
+            thread_id=thread_id,
+            status="completed",
+            answer=answer,
+            trace_id=trace_id,
+        )
     finally:
         reset_identity(identity_token)
 

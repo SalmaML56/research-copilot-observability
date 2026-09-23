@@ -19,9 +19,8 @@ Run:
     uv run python -m research_copilot.agents.run_streaming_demo
 """
 
-from langgraph.checkpoint.sqlite import SqliteSaver
 
-from research_copilot.agents.checkpointed_agent import build_agent, CHECKPOINT_DB_PATH
+from research_copilot.agents.checkpointed_agent import build_agent, open_checkpointer
 
 THREAD_ID = "phase1-step11-streaming-demo"
 
@@ -42,7 +41,7 @@ def main() -> None:
         "then write a short final report."
     )
 
-    with SqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
+    with open_checkpointer() as checkpointer:
         agent = build_agent(checkpointer)
         config = {"configurable": {"thread_id": THREAD_ID}}
 
