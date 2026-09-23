@@ -13,14 +13,17 @@
 > `docs/all_phases_original_plan.md` (Phase 7, Steps 44–48).
 > Branch: `phase-7/production-hardening`, cut from `develop` at `9ed4da5`.
 
-**Status:** plan only. No code written. Blocked on the open questions at
-the end.
+**Status:** all open questions answered (see Decisions). Step 46 in progress.
 
-## Decisions (answered 2026-09-23)
+## Decisions (all answered 2026-09-23)
 
 | Q | Answer |
 |---|---|
-| Q1–Q5 | *pending* |
+| Q1 | (c) FastAPI + `PostgresSaver` + an SSE streaming endpoint. LangGraph Server skipped: `langgraph up` needs a LangSmith key or licence (see Q2) |
+| Q2 | (b) no LangSmith key |
+| Q3 | (a) dedicated `checkpoint-postgres` service |
+| Q4 | (a) start fresh in Postgres; `checkpoints.sqlite` left untouched |
+| Q5 | (a) per-model-call `gen_ai.usage.cost_usd` > $X. X proposed from real Step 38/42 data, to be confirmed before Step 44 config is written |
 | Q6 | (b) keep or drop per session, via a deterministic flag from a hash of `session_id` |
 | Q7a | Yes: redaction is on by default in prod. Unredacted full capture is the per-env opt-in |
 | Q7b | (a) collector traces + logs only. Checkpoint DB, eval files and direct-Langfuse mode documented as gaps. `debug` exporter off outside dev |
