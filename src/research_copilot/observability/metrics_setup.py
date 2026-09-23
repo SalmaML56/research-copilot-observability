@@ -220,6 +220,8 @@ def _resolve_provider_name() -> str:
     """gen_ai.provider.name from OUR config, not response metadata -
     ChatDeepSeek's raw llm_output falsely reports \'openai\' since it uses
     an OpenAI-compatible wrapper internally. Verified via direct test."""
+    if settings.model_profile == "stub":
+        return "stub"
     return "groq" if settings.model_profile == "cheap" else "deepseek"
 
 
@@ -237,6 +239,9 @@ def _resolve_model_name(response: Any = None) -> str:
         reported = llm_output.get("model_name") or llm_output.get("model")
         if reported:
             return str(reported)
+    if settings.model_profile == "stub":
+        # Step 47 load test: never let stub calls land on DeepSeek's series.
+        return "stub"
     return settings.cheap_model_name if settings.model_profile == "cheap" else settings.primary_model_name
 
 

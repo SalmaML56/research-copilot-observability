@@ -9,7 +9,9 @@ from langchain_groq import ChatGroq
 
 load_dotenv()
 
-VALID_MODEL_PROFILES = ("primary", "cheap")
+# "stub": Phase 7, step 47 load test only - a scripted fake model
+# (agents/stub_model.py), never a real answer.
+VALID_MODEL_PROFILES = ("primary", "cheap", "stub")
 
 
 class Settings:
@@ -63,6 +65,10 @@ class Settings:
 
     @property
     def default_model(self) -> ChatDeepSeek | ChatGroq:
+        if self.model_profile == "stub":
+            from research_copilot.agents.stub_model import StubChatModel
+
+            return StubChatModel()
         if self.model_profile == "cheap":
             return self.get_cheap_model()
         return self.get_primary_model()
