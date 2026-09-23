@@ -172,6 +172,13 @@ def setup_metrics_instrumentation(otlp_endpoint: str | None = None) -> MeterProv
         unit="{decision}",
         description="Human approval decisions, by decision (approve/reject)",
     )
+    # Both series exist at 0 from process start. Otherwise a series is first
+    # exported already at 1, increase() has no earlier sample to diff
+    # against, and every process's first decision of each kind is invisible
+    # to the rejection-rate panel (seen live: 1 reject + 4 approves in the
+    # last hour read as rejection rate 0 after an app restart).
+    for decision in ("approve", "reject"):
+        _approval_decisions_counter.add(0, attributes={"decision": decision})
 
     _meter_provider = provider
     return _meter_provider
