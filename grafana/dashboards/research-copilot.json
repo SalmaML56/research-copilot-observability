@@ -592,7 +592,7 @@
           "refId": "A",
           "editorMode": "code",
           "expr": "max(research_copilot_checkpoint_db_size_bytes)",
-          "legendFormat": "checkpoints.sqlite"
+          "legendFormat": "postgres checkpoint tables"
         }
       ]
     },
