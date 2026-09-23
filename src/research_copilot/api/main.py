@@ -4,6 +4,9 @@ Phase 4, step 30: FastAPI wrapper around the agent.
 POST /research — runs the agent on a given topic.
 POST /research/{thread_id}/approve — approves a paused finalize_report
 call, so the API is actually usable end to end.
+POST /research/stream — Phase 7, step 46: same run as /research, streamed
+as Server-Sent Events; ends with a "status" event shaped like
+ResearchResponse. A pause is approved through the normal /approve.
 POST /research/{thread_id}/feedback — Phase 6, step 43: thumbs up/down on
 a completed response, pushed as a "user_feedback" score onto that
 response's trace.
@@ -13,14 +16,18 @@ Run:
     uv run uvicorn research_copilot.api.main:app --reload
 """
 
+import contextvars
 import json
 import os
+import queue
 import random
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from langfuse import get_client
 from opentelemetry import trace
 from pydantic import BaseModel
@@ -313,6 +320,108 @@ def research(request: ResearchRequest) -> ResearchResponse:
         )
     finally:
         reset_identity(identity_token)
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _stream_source(namespace: tuple) -> str:
+    """Lead agent, or the subagent path the event came from."""
+    if not namespace:
+        return "lead-agent"
+    return " > ".join(part.split(":")[0] for part in namespace)
+
+
+@app.post("/research/stream")
+def research_stream(request: ResearchRequest) -> StreamingResponse:
+    """
+    Phase 7, step 46: streaming variant of /research, as Server-Sent Events:
+    "token" (model text chunks), "tool_call" (tool names only - args can be
+    whole reports), then one final "status" event with the same fields as
+    ResearchResponse.
+
+    The agent runs on ONE worker thread started under a copy of this
+    handler's context, feeding a queue the response generator drains.
+    Iterating agent.stream() directly inside the generator does not work:
+    Starlette runs each next() of a sync generator in a separate
+    anyio.to_thread.run_sync call, each with a fresh copy of the request
+    context (verified in starlette 1.6.0's iterate_in_threadpool), so the
+    identity ContextVar and the OTel parent span set up here would not be
+    reliably visible to the agent's spans, and spans could start and end in
+    different contexts.
+
+    Not included here, unlike /research: Step 40 online-eval sampling. If
+    the client disconnects, the run still finishes and is checkpointed; it
+    can be approved as usual.
+    """
+    thread_id = request.thread_id or str(uuid.uuid4())
+    identity_token = _begin_request(thread_id, request.user_id)
+    try:
+        log.info("research stream request received", extra={"topic": request.topic})
+        run_context = contextvars.copy_context()
+    finally:
+        reset_identity(identity_token)
+
+    events: queue.Queue[str | None] = queue.Queue()
+
+    def run_agent() -> None:
+        try:
+            agent = build_agent(PostgresSaver(_checkpoint_pool))
+            config = {
+                "configurable": {"thread_id": thread_id},
+                "callbacks": [GenAIMetricsCallbackHandler()],
+            }
+            for namespace, mode, chunk in agent.stream(
+                {"messages": [{"role": "user", "content": request.topic}]},
+                config=config,
+                stream_mode=["updates", "messages"],
+                subgraphs=True,
+            ):
+                source = _stream_source(namespace)
+                if mode == "messages":
+                    text = _extract_text_content(getattr(chunk[0], "content", ""))
+                    if text:
+                        events.put(_sse("token", {"source": source, "text": text}))
+                elif mode == "updates":
+                    for node_output in chunk.values():
+                        if not isinstance(node_output, dict):
+                            continue
+                        for message in node_output.get("messages") or []:
+                            for tool_call in getattr(message, "tool_calls", None) or []:
+                                events.put(_sse("tool_call", {"source": source, "name": tool_call.get("name")}))
+
+            state = agent.get_state(config)
+            record_run_steps(len(state.values.get("todos") or []))
+            if state.next:
+                mark_pending_approval(thread_id)
+                log.info("research paused for approval")
+                response = ResearchResponse(thread_id=thread_id, status="paused_for_approval")
+            else:
+                clear_pending_approval(thread_id)
+                log.info("research completed")
+                trace_id = _current_trace_id()
+                _record_completed_trace(thread_id, trace_id)
+                response = ResearchResponse(
+                    thread_id=thread_id,
+                    status="completed",
+                    answer=_extract_text_content(state.values["messages"][-1].content),
+                    trace_id=trace_id,
+                )
+            events.put(_sse("status", response.model_dump()))
+        except Exception as exc:
+            log.exception("research stream failed")
+            events.put(_sse("error", {"thread_id": thread_id, "error": repr(exc)}))
+        finally:
+            events.put(None)
+
+    threading.Thread(target=run_context.run, args=(run_agent,), daemon=True).start()
+
+    def drain():
+        while (item := events.get()) is not None:
+            yield item
+
+    return StreamingResponse(drain(), media_type="text/event-stream")
 
 
 @app.post("/research/{thread_id}/approve", response_model=ResearchResponse)
