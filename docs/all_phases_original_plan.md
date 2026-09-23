@@ -75,7 +75,7 @@ Branch: phase-6/evaluation-framework
 42. Run A/B test: frontier model vs open-weight model, chart cost vs quality.
 43. Add human feedback (thumbs up/down on FastAPI response), post score to trace.
 
-STATUS: IN PROGRESS (this is the current phase)
+STATUS: DONE (merged into develop via PR #31)
 
 ## Phase 7 — Production-safe
 Branch: phase-7/production-hardening
