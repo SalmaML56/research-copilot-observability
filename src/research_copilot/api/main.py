@@ -74,7 +74,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Research Copilot API", lifespan=lifespan)
-FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
+# Phase 7: no per-message ASGI "http send"/"http receive" sub-spans. Each
+# SSE chunk from /research/stream got its own span - 1085 of 1270 spans in
+# one streamed run's trace - and they carried no identity attributes either.
+# The request's root span still records method, route, status and duration.
+FastAPIInstrumentor.instrument_app(app, tracer_provider=provider, exclude_spans=["send", "receive"])
 
 # Step 40: online evals. Langfuse's trace-read API isn't usable in this
 # deployment (self-hosted, v4 "events_only" mode - trace.list/get 404, and
