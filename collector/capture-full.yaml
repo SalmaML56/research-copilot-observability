@@ -1,0 +1,17 @@
+# Phase 7, step 45: UNREDACTED full capture - the per-environment opt-in
+# (plan Q7a). Loaded on top of otel-collector-config.yaml when
+# COLLECTOR_CAPTURE=full (docker-compose.yml). The collector merges config
+# files map by map and REPLACES lists, so each list below is the whole
+# processor/exporter list for that pipeline. Dev only: every prompt, answer,
+# email or key in a span is stored and printed as-is.
+service:
+  pipelines:
+    traces/in:
+      processors: [memory_limiter, gen_ai_normalizer, transform/cost]
+    traces/sampled:
+      exporters: [debug, otlp_http/grafana]
+    metrics:
+      processors: []
+    logs:
+      processors: []
+      exporters: [debug, otlp_http/grafana]

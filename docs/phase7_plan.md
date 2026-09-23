@@ -13,7 +13,7 @@
 > `docs/all_phases_original_plan.md` (Phase 7, Steps 44–48).
 > Branch: `phase-7/production-hardening`, cut from `develop` at `9ed4da5`.
 
-**Status:** all open questions answered (see Decisions). Steps 46, 44 done.
+**Status:** all open questions answered (see Decisions). Steps 46, 44, 45 done.
 
 ## Decisions (all answered 2026-09-23)
 

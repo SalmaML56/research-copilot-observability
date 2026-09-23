@@ -2,9 +2,15 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.159.0
     container_name: otel-collector
-    command: ["--config=/etc/otel-collector-config.yaml"]
+    # Phase 7, step 45: the second file picks the capture mode. Default
+    # "redacted"; COLLECTOR_CAPTURE=full (in .env) is the unredacted dev
+    # opt-in. Anything else names a missing file and the collector won't
+    # start, rather than silently running unredacted.
+    command:
+      - "--config=/etc/otelcol/otel-collector-config.yaml"
+      - "--config=/etc/otelcol/capture-${COLLECTOR_CAPTURE:-redacted}.yaml"
     volumes:
-      - ./collector/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+      - ./collector:/etc/otelcol:ro
     ports:
       - "4317:4317"
       - "4318:4318"
