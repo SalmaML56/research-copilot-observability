@@ -182,12 +182,22 @@ def run_one(agent, entry: dict, arm: str, configured_model_name: str, run_label:
                 },
             },
         )
+        last = result["messages"][-1]
+        answer = final_text(last.content)
         row.update(
             status="ok",
-            answer=final_text(result["messages"][-1].content),
+            answer=answer,
             retrieval_context=tool_collector.search_outputs,
             tool_calls=tool_collector.tool_calls,
         )
+        # Seen live (rc-001-primary, 2026-09-23): the last turn was an empty
+        # message whose only tool call, finalize_report, had unparseable
+        # args, so the loop ended with no answer. As "ok" it crashed
+        # score_ab_runs (GEval rejects an empty actual_output) and, since
+        # scoring resumes in order, blocked every row after it.
+        if not answer.strip():
+            invalid = [c.get("name") for c in getattr(last, "invalid_tool_calls", None) or []]
+            row.update(status="error", error=f"empty final answer (invalid tool calls: {invalid})")
     except Exception as e:
         row.update(
             status="error",
