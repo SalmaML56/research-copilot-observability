@@ -18,6 +18,16 @@ metrics and writes scores back onto the matching Langfuse trace.
 Threshold 0.5 on both (DeepEval's default), descriptive only — a failing
 score is reported, not enforced; gating is out of scope for Phase 6.
 
+> **Update (Phase 8, Step 51):** root cause found, and one result below was
+> wrong. `write_file` never executed in the failed runs: each researcher
+> `write_file` call was cut off at `MAX_TOKENS=4096` (~15k chars of notes),
+> became an unparseable `invalid_tool_call`, and was silently dropped. It was
+> not the `FilesystemMiddleware` or race theories listed below. rc-002's
+> correctness "pass" was also a judge false positive: its answer is a
+> "could not be completed" report that names the expected keywords. So the
+> real success rate was 1/5, not 2/5. Diagnosis, fix and verification are in
+> `docs/step51_bad_trace_runbook.md`.
+
 ## Results (5/5 captured, 5/5 scored)
 
 | ID | Capture status | Correctness | Faithfulness | Trace ID |
