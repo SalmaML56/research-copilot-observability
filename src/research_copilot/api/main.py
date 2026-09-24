@@ -39,6 +39,7 @@ from langgraph.types import Command
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from research_copilot.agents.checkpointed_agent import build_agent, create_checkpoint_pool
+from research_copilot.agents.prompt_registry import prompt_version_stamp
 from research_copilot.observability.otel_setup import setup_otel_instrumentation
 from research_copilot.observability.identity import (
     SESSION_SAMPLED_ATTRIBUTE,
@@ -167,7 +168,7 @@ def _begin_request(thread_id: str, user_id: str):
     token = set_identity(
         session_id=thread_id,
         user_id=user_id,
-        prompt_version=settings.prompt_version,
+        prompt_version=prompt_version_stamp(),
         environment=settings.environment,
     )
     root_span = trace.get_current_span()
@@ -175,7 +176,7 @@ def _begin_request(thread_id: str, user_id: str):
         root_span.set_attribute("session_id", thread_id)
         root_span.set_attribute(SESSION_SAMPLED_ATTRIBUTE, session_sampled(thread_id))
         root_span.set_attribute("user_id", user_id)
-        root_span.set_attribute("prompt_version", settings.prompt_version)
+        root_span.set_attribute("prompt_version", prompt_version_stamp())
         root_span.set_attribute("environment", settings.environment)
     return token
 

@@ -15,7 +15,7 @@ from opentelemetry.sdk.trace import SpanProcessor
 class RequestIdentity:
     session_id: str | None = None
     user_id: str | None = None
-    prompt_version: str = "v1"
+    prompt_version: str = "unknown"
     environment: str = "dev"
 
 
@@ -24,7 +24,7 @@ _current_identity: contextvars.ContextVar[RequestIdentity] = contextvars.Context
 )
 
 
-def set_identity(session_id: str, user_id: str = "unknown", prompt_version: str = "v1", environment: str = "dev") -> contextvars.Token:
+def set_identity(session_id: str, user_id: str = "unknown", prompt_version: str = "unknown", environment: str = "dev") -> contextvars.Token:
     identity = RequestIdentity(session_id=session_id, user_id=user_id, prompt_version=prompt_version, environment=environment)
     return _current_identity.set(identity)
 

@@ -28,6 +28,7 @@ from langfuse import get_client
 from langfuse.langchain import CallbackHandler
 
 from research_copilot.agents.main_agent import agent
+from research_copilot.agents.prompt_registry import prompt_version_stamp
 from research_copilot.config.settings import settings
 from research_copilot.evals.tool_collector import ToolCollector
 
@@ -59,6 +60,7 @@ def run_one(entry: dict, run_label: str) -> dict:
         "expected_facts": entry["expected_facts"],
         "run_label": run_label,
         "model_profile": settings.model_profile,
+        "prompt_version": prompt_version_stamp(),
         "trace_id": trace_id,
     }
     start = time.time()
@@ -70,6 +72,8 @@ def run_one(entry: dict, run_label: str) -> dict:
                 "metadata": {
                     "langfuse_session_id": f"{run_label}-{entry['id']}",
                     "langfuse_user_id": "eval-capture",
+                    "langfuse_tags": [f"prompt_version:{prompt_version_stamp()}"],
+                    "prompt_version": prompt_version_stamp(),
                 },
             },
         )

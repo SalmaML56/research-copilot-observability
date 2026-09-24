@@ -6,7 +6,7 @@ Every span in this project SHOULD carry these attributes:
 |---|---|---|
 | session_id | string | span attribute, set at request entry point, propagated to child spans |
 | user_id | string | span attribute, same mechanism |
-| prompt_version | string | span attribute, same mechanism |
+| prompt_version | string | span attribute, same mechanism. Value from `agents/prompt_registry.py` (Step 50): `lead=N,researcher=N,writer=N` Langfuse versions, or `local-<hash>` per role when not synced |
 | environment | string | span attribute (NOT an OTel Resource attribute) — see note below |
 | gen_ai.usage.cost_usd | float | model-call spans only — set by the Collector's `transform/cost` processor (Step 34) |
 
