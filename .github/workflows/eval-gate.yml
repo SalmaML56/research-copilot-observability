@@ -36,6 +36,8 @@ env:
   DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
   PYTHONUNBUFFERED: "1"
 
+# astral-sh/setup-uv publishes no floating major tag: @v10 failed on the
+# first real run ("unable to find version `v10`"), so it's pinned exactly.
 jobs:
   smoke:
     # $0: no secrets, no real API calls.
@@ -43,7 +45,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       - run: uv sync --frozen
@@ -79,7 +81,7 @@ jobs:
             exit 1
           fi
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       - run: uv sync --frozen
@@ -124,7 +126,7 @@ jobs:
           fi
       - uses: actions/checkout@v7
         if: needs.capture.result != 'skipped'
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.2.0
         if: needs.capture.result != 'skipped'
         with:
           enable-cache: true
