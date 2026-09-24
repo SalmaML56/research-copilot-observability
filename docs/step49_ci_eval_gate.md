@@ -21,14 +21,37 @@ rebuilt from those comments and the commit messages.
 The logic lives in `src/research_copilot/evals/ci_gate.py`, and the verdict
 rules are unit-tested in `tests/test_ci_gate.py`:
 
-- **pass**: every row scored, and mean correctness >= threshold.
-- **fail**: mean < threshold, a run crashed with a code error, or a run went
-  past its $1.00 budget (Step 42's max was $0.57, so a bigger bill means a loop).
-- **inconclusive** (exit 0 plus a warning, Q1/Q2/Q9): something outside the
-  PR stopped a row from being scored. That covers every `web_search` failing
-  (the DuckDuckGo block on cloud IPs), a provider or network error, a judge
-  error after retries, or a missing row. The gate never decides on a
-  partial mean of 1-2 rows.
+An unscored row could have scored anywhere from 0 to 1, so the gate works
+out the worst-case mean (unscored = 0) and the best-case mean (unscored = 1):
+
+- **pass**: worst-case mean >= threshold.
+- **fail**: best-case mean < threshold, a run crashed with a code error, or a
+  run went past its $1.00 budget (Step 42's max was $0.57, so a bigger bill
+  means a loop).
+- **inconclusive** (exit 0 plus a warning, Q1/Q2/Q9): a row couldn't be
+  scored for a reason outside the PR, **and** its score could still flip
+  the verdict. The reasons are: every `web_search` failed (the DuckDuckGo
+  block on cloud IPs), a provider or network error, a judge error after
+  retries, or a missing row.
+
+A blocked search never fails a PR on its own. With threshold 0.6:
+
+| Rows | Verdict |
+|---|---|
+| blocked, 1.00, 1.00 | pass (worst case 0.67) |
+| blocked, 1.00, 0.00 | inconclusive (0.33-0.67) |
+| blocked, 0.00, 0.00 | **fail** (best case 0.33) |
+| all 3 blocked | inconclusive |
+
+Before the bounds check (found while reviewing the threshold), the third
+row came out inconclusive with exit 0. A real regression could hide behind
+one blocked search and still get a green check.
+
+A **partial** block (some searches fail, at least one works) is still
+scored. The run has real search results, and nothing reliably tells a
+thin-but-honest report from a regression. The 0.6 threshold absorbs one
+such prompt; two at once would fail the PR. That residual risk is accepted.
+
 - Fork PRs get no secrets, so `capture` is skipped and `eval-gate` reports
   "not run".
 

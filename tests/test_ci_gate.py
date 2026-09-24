@@ -29,7 +29,8 @@ def test_fail_below_threshold():
 def test_all_searches_blocked_is_inconclusive_not_fail():
     row = with_problem({"id": "rc-002", "status": "ok", "answer": "could not complete",
                         "retrieval_context": [SEARCH_FAIL, SEARCH_FAIL]})
-    result = decide([scored("rc-001", 0.0), row, scored("rc-003", 0.0)], threshold=0.5)
+    # mean is 0.33 or 0.67 depending on the blocked row: can't decide
+    result = decide([scored("rc-001", 1.0), row, scored("rc-003", 0.0)], threshold=0.5)
     assert result["verdict"] == "inconclusive"
     assert result["problems"][0][:2] == ("inconclusive", "rc-002")
 
@@ -41,7 +42,7 @@ def test_one_successful_search_is_scorable():
 
 def test_provider_error_is_inconclusive():
     row = with_problem({"id": "rc-001", "status": "error", "error_type": "APITimeoutError", "error": "timed out"})
-    assert decide([row, scored("rc-002", 1.0), scored("rc-003", 1.0)], threshold=0.5)["verdict"] == "inconclusive"
+    assert decide([row, scored("rc-002", 1.0), scored("rc-003", 0.0)], threshold=0.5)["verdict"] == "inconclusive"
 
 
 def test_code_error_fails():
@@ -55,7 +56,7 @@ def test_budget_exceeded_fails():
 
 
 def test_missing_row_is_inconclusive():
-    result = decide([scored("rc-001", 1.0), scored("rc-002", 1.0)], threshold=0.5)
+    result = decide([scored("rc-001", 1.0), scored("rc-002", 0.0)], threshold=0.5)
     assert result["verdict"] == "inconclusive"
     assert ("inconclusive", "rc-003") == result["problems"][0][:2]
 
@@ -85,3 +86,30 @@ def test_empty_final_answer_fails():
     row = with_problem({"id": "rc-001", "status": "error", "error_type": "EmptyFinalAnswer",
                         "error": "empty final answer (invalid tool calls: ['finalize_report'])"})
     assert decide([row, scored("rc-002", 1.0), scored("rc-003", 1.0)], threshold=0.5)["verdict"] == "fail"
+
+
+def blocked(pid):
+    return with_problem({"id": pid, "status": "ok", "retrieval_context": [SEARCH_FAIL, SEARCH_FAIL]})
+
+
+def test_blocked_search_cannot_hide_a_real_regression():
+    # best case (blocked row = 1.0) is 0.33 < 0.6: fails whatever it would have scored
+    result = decide([blocked("rc-001"), scored("rc-002", 0.0), scored("rc-003", 0.0)], threshold=0.6)
+    assert result["verdict"] == "fail"
+
+
+def test_blocked_search_does_not_fail_a_healthy_pr():
+    # worst case (blocked row = 0.0) is 0.67 >= 0.6: passes whatever it would have scored
+    result = decide([blocked("rc-001"), scored("rc-002", 1.0), scored("rc-003", 1.0)], threshold=0.6)
+    assert result["verdict"] == "pass"
+
+
+def test_blocked_row_that_could_flip_the_verdict_is_inconclusive():
+    result = decide([blocked("rc-001"), scored("rc-002", 1.0), scored("rc-003", 0.0)], threshold=0.6)
+    assert result["verdict"] == "inconclusive"
+
+
+def test_all_blocked_is_inconclusive_not_fail():
+    result = decide([blocked("rc-001"), blocked("rc-002"), blocked("rc-003")], threshold=0.6)
+    assert result["verdict"] == "inconclusive"
+    assert result["mean"] is None

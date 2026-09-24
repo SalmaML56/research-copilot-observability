@@ -7,16 +7,17 @@ Phase 8, Step 49: the PR eval gate. Run by .github/workflows/eval-gate.yml.
     score    correctness (Step 39's GEval, Groq judge) for every captured
              row, then the verdict. Sequential: the judge has an 8000 TPM cap.
 
-Verdicts (plan Q1, Q2, Q9):
-    pass          every row scored, mean correctness >= threshold
-    fail          mean correctness < threshold, OR a run crashed with a
+Verdicts (plan Q1, Q2, Q9). Unscored rows count as 0 for the worst-case
+mean and as 1 for the best case:
+    pass          worst-case mean >= threshold
+    fail          best-case mean < threshold, OR a run crashed with a
                   non-provider error, OR a run blew its cost budget (a
                   runaway loop is a real regression, not bad luck)
-    inconclusive  something outside the PR's control stopped a row from
-                  being scored: every web_search in the run failed (the
-                  DuckDuckGo block on cloud IPs, tools.py), a provider/
-                  network error, or a judge error after retries. Exit 0 with
-                  a warning - never gate on a partial mean of 1-2 rows.
+    inconclusive  a row couldn't be scored for a reason outside the PR's
+                  control (every web_search failed - the DuckDuckGo block on
+                  cloud IPs, tools.py; a provider/network error; a judge
+                  error after retries; a missing row) AND its score could
+                  still flip the verdict. Exit 0 with a warning.
 
 Run locally:
     uv run python -m research_copilot.evals.ci_gate capture --id rc-001 --out-dir runs/
@@ -96,14 +97,23 @@ def decide(rows: list[dict], threshold: float, expected_ids=GATE_IDS) -> dict:
               if i in by_id and by_id[i].get("correctness_score") is not None]
     mean = sum(scores) / len(scores) if scores else None
 
+    # An unscored row could have scored anywhere in [0, 1]. Only when that
+    # range straddles the threshold is the run really inconclusive: one
+    # blocked prompt plus two scored 0.00 is a fail whatever the blocked
+    # one would have scored (before this, it exited 0 and hid a real
+    # regression behind a flaky search).
+    unscored = len(expected_ids) - len(scores)
+    best = (sum(scores) + unscored) / len(expected_ids)
+    worst = sum(scores) / len(expected_ids)
+
     if any(kind == "fail" for kind, _, _ in problems):
         verdict = "fail"
-    elif problems:
-        verdict = "inconclusive"
-    elif mean < threshold:
+    elif best < threshold:
         verdict = "fail"
-    else:
+    elif worst >= threshold:
         verdict = "pass"
+    else:
+        verdict = "inconclusive"
     return {"verdict": verdict, "mean": mean, "threshold": threshold, "scored": len(scores),
             "expected": len(expected_ids), "problems": problems}
 
