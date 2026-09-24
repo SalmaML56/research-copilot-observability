@@ -1,6 +1,6 @@
 """Step 49: the eval gate's verdict logic (no API calls)."""
 
-from research_copilot.evals.ci_gate import GATE_IDS, decide, row_problem
+from research_copilot.evals.ci_gate import GATE_IDS, decide, no_notes_reason, row_problem
 
 SEARCH_FAIL = "Search failed after retries for query 'x': blocked. This is often a temporary block"
 
@@ -68,3 +68,20 @@ def test_fail_beats_inconclusive():
 
 def test_gate_uses_three_prompts():
     assert GATE_IDS == ("rc-001", "rc-002", "rc-003")
+
+
+def test_no_write_file_scores_zero_without_judge():
+    row = {"id": "rc-002", "status": "ok", "tool_calls": ["task", "web_search", "read_file", "finalize_report"]}
+    assert "write_file never ran" in no_notes_reason(row)
+
+
+def test_write_file_ran_goes_to_judge():
+    row = {"id": "rc-004", "status": "ok", "tool_calls": ["task", "web_search", "write_file", "task", "read_file"]}
+    assert no_notes_reason(row) is None
+
+
+def test_empty_final_answer_fails():
+    # capture_runs records a truncated finalize_report as EmptyFinalAnswer
+    row = with_problem({"id": "rc-001", "status": "error", "error_type": "EmptyFinalAnswer",
+                        "error": "empty final answer (invalid tool calls: ['finalize_report'])"})
+    assert decide([row, scored("rc-002", 1.0), scored("rc-003", 1.0)], threshold=0.5)["verdict"] == "fail"

@@ -77,12 +77,22 @@ def run_one(entry: dict, run_label: str, extra_callbacks: list = ()) -> dict:
                 },
             },
         )
+        last = result["messages"][-1]
+        answer = final_text(last.content)
         row.update(
             status="ok",
-            answer=final_text(result["messages"][-1].content),
+            answer=answer,
             retrieval_context=collector.search_outputs,
             tool_calls=collector.tool_calls,
         )
+        # Same guard as capture_ab_runs.py (Step 42), missing here until
+        # Step 51: an empty last turn means the lead's finalize_report was
+        # cut off at max_tokens and never ran. Recorded as "ok" it crashed
+        # ci_gate score (GEval rejects an empty actual_output).
+        if not answer.strip():
+            invalid = [c.get("name") for c in getattr(last, "invalid_tool_calls", None) or []]
+            row.update(status="error", error_type="EmptyFinalAnswer",
+                       error=f"empty final answer (invalid tool calls: {invalid})")
     except Exception as e:
         row.update(
             status="error",

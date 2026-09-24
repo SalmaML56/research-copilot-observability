@@ -27,6 +27,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 GATE_IDS = ("rc-001", "rc-002", "rc-003")  # plan Q3: 3 prompts
@@ -34,6 +35,12 @@ GATE_IDS = ("rc-001", "rc-002", "rc-003")  # plan Q3: 3 prompts
 # looping, and gets stopped instead of billing on.
 RUN_BUDGET_USD = 1.00
 SEARCH_FAILED_PREFIX = "Search failed after retries"
+# Step 51: the researcher hands off through a notes file. A run where
+# write_file never executed produced a "could not complete" report, and the
+# judge scored two of those 1.00 because they list the expected keywords
+# while explaining what was attempted (Step 38 rc-002, CI run 36001831742
+# rc-002). ToolCollector only records tools that actually started.
+NOTES_TOOL = "write_file"
 # Exception class names from the provider SDKs / httpx that mean "the API or
 # network failed", not "the code under test is broken".
 PROVIDER_ERROR_TYPES = {
@@ -61,6 +68,14 @@ def row_problem(row: dict) -> tuple[str, str] | None:
     searches = row.get("retrieval_context") or []
     if searches and all(str(s).startswith(SEARCH_FAILED_PREFIX) for s in searches):
         return "inconclusive", f"all {len(searches)} web_search calls failed (search provider blocked?)"
+    return None
+
+
+def no_notes_reason(row: dict) -> str | None:
+    """Why a captured row gets correctness 0 without the judge, else None."""
+    if NOTES_TOOL not in (row.get("tool_calls") or []):
+        return (f"{NOTES_TOOL} never ran, so no research notes reached the report; "
+                "scored 0 without the judge (see docs/step51_bad_trace_runbook.md)")
     return None
 
 
@@ -110,7 +125,10 @@ def capture(entry_id: str, out_dir: Path) -> None:
 
     entry = next(e for e in load_dataset() if e["id"] == entry_id)
     guard = BudgetGuard(settings.primary_model_name)
-    run_label = f"ci-{os.getenv('GITHUB_RUN_ID', 'local')}-{os.getenv('GITHUB_RUN_ATTEMPT', '1')}"
+    # The trace id is seeded from run_label: a fixed "local" label made every
+    # local re-run of a prompt append to the previous run's Langfuse trace.
+    run_id = os.getenv("GITHUB_RUN_ID") or f"local{int(time.time())}"
+    run_label = f"ci-{run_id}-{os.getenv('GITHUB_RUN_ATTEMPT', '1')}"
     row = run_one(entry, run_label, extra_callbacks=[guard])
     row.update(cost_usd=round(guard.cost_usd, 6), unpriced_calls=guard.unpriced_calls)
 
@@ -138,6 +156,11 @@ def score(runs_dir: Path, threshold: float) -> dict:
         problem = row_problem(row)
         if problem:
             row["problem"] = problem
+            continue
+        reason = no_notes_reason(row)
+        if reason:
+            row["correctness_score"], row["correctness_reason"] = 0.0, reason
+            print(f"{row['id']}: correctness=0.00 ({NOTES_TOOL} never ran)")
             continue
         case = LLMTestCase(input=row["prompt"], actual_output=row["answer"],
                            expected_output="\n".join(row["expected_facts"]))
