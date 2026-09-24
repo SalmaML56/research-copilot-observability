@@ -53,6 +53,7 @@ from langfuse import get_client
 from langfuse.langchain import CallbackHandler
 
 from deepagents import create_deep_agent
+from research_copilot.agents.prompt_registry import prompt_version_stamp
 from research_copilot.agents.subagents import LEAD_AGENT_SYSTEM_PROMPT, researcher, writer
 from research_copilot.agents.tools import finalize_report
 from research_copilot.config.settings import settings
@@ -165,6 +166,7 @@ def run_one(agent, entry: dict, arm: str, configured_model_name: str, run_label:
         "expected_facts": entry["expected_facts"],
         "run_label": run_label,
         "trace_id": trace_id,
+        "prompt_version": prompt_version_stamp(),
     }
     start = time.time()
     try:
@@ -179,6 +181,8 @@ def run_one(agent, entry: dict, arm: str, configured_model_name: str, run_label:
                 "metadata": {
                     "langfuse_session_id": f"{run_label}-{entry['id']}-{arm}",
                     "langfuse_user_id": "eval-capture-ab",
+                    "langfuse_tags": [f"prompt_version:{prompt_version_stamp()}"],
+                    "prompt_version": prompt_version_stamp(),
                 },
             },
         )

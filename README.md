@@ -18,14 +18,14 @@ fully complete.
 | Phase | What it adds | Status |
 |---|---|---|
 | 0 | Folder structure, OTel Collector, trace docs | Done |
-| 1 | Multi-agent core, checkpointer, human-in-the-loop, streaming, dual model profiles, eval dataset | Mostly done — Postgres checkpointing (Step 9) deferred, see docs/progress.md |
+| 1 | Multi-agent core, checkpointer, human-in-the-loop, streaming, dual model profiles, eval dataset | Done — Postgres checkpointing (Step 9) was deferred, then implemented in Phase 7 (Step 46) |
 | 2 | Langfuse tracing | Mostly done — Step 19 replay done; Langfuse is now auto-provisioned on first start (see Setup) |
 | 3 | OpenTelemetry migration (OpenInference/OpenLLMetry, manual spans, context propagation) | Mostly done — Steps 25 and 26 done; Langfuse double-export closed in Phase 5 |
 | 4 | Arize Phoenix, FastAPI endpoint, Grafana/Tempo/Prometheus/Loki | Done — Steps 28 and 32 done; the Collector now carries traces, metrics and logs |
 | 5 | Metrics dashboards + alerts | Done — start with [the Phase 5 guide](docs/phase5_evidence/README.md) |
-| 6 | Evaluation framework | Not started |
-| 7 | Production hardening | Not started |
-| 8 | CI/CD | Not started |
+| 6 | Evaluation framework | Mostly done — Steps 38–43 built and verified live, but offline evals cover 5 of 25 dataset prompts (by scope decision), and the Step 42 A/B cheap arm completed 0/5 (Groq rate limits), so there is no cost/quality comparison |
+| 7 | Production hardening | Mostly done — Steps 44–48 done (Postgres checkpoints, tail sampling, redaction, approval metrics, load test); LangGraph Server skipped (needs a LangSmith key), and redaction doesn't cover the app's stdout log, checkpoint DB or eval files |
+| 8 | CI/CD | Mostly done — Steps 49–51 done (PR eval gate at threshold 0.6, prompt versioning, bad-trace runbook); gate runs only rc-001..003, and `eval-gate`/`smoke` are not yet required checks (needs repo owner) |
 
 ## Setup
 

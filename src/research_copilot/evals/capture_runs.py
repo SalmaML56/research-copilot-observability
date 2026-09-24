@@ -28,6 +28,7 @@ from langfuse import get_client
 from langfuse.langchain import CallbackHandler
 
 from research_copilot.agents.main_agent import agent
+from research_copilot.agents.prompt_registry import prompt_version_stamp
 from research_copilot.config.settings import settings
 from research_copilot.evals.tool_collector import ToolCollector
 
@@ -50,7 +51,7 @@ def load_dataset() -> list[dict]:
         return [json.loads(line) for line in f]
 
 
-def run_one(entry: dict, run_label: str) -> dict:
+def run_one(entry: dict, run_label: str, extra_callbacks: list = ()) -> dict:
     trace_id = get_client().create_trace_id(seed=f"{run_label}:{entry['id']}")
     collector = ToolCollector()
     row = {
@@ -59,6 +60,7 @@ def run_one(entry: dict, run_label: str) -> dict:
         "expected_facts": entry["expected_facts"],
         "run_label": run_label,
         "model_profile": settings.model_profile,
+        "prompt_version": prompt_version_stamp(),
         "trace_id": trace_id,
     }
     start = time.time()
@@ -66,23 +68,36 @@ def run_one(entry: dict, run_label: str) -> dict:
         result = agent.invoke(
             {"messages": [{"role": "user", "content": entry["prompt"]}]},
             config={
-                "callbacks": [CallbackHandler(trace_context={"trace_id": trace_id}), collector],
+                "callbacks": [CallbackHandler(trace_context={"trace_id": trace_id}), collector, *extra_callbacks],
                 "metadata": {
                     "langfuse_session_id": f"{run_label}-{entry['id']}",
                     "langfuse_user_id": "eval-capture",
+                    "langfuse_tags": [f"prompt_version:{prompt_version_stamp()}"],
+                    "prompt_version": prompt_version_stamp(),
                 },
             },
         )
+        last = result["messages"][-1]
+        answer = final_text(last.content)
         row.update(
             status="ok",
-            answer=final_text(result["messages"][-1].content),
+            answer=answer,
             retrieval_context=collector.search_outputs,
             tool_calls=collector.tool_calls,
         )
+        # Same guard as capture_ab_runs.py (Step 42), missing here until
+        # Step 51: an empty last turn means the lead's finalize_report was
+        # cut off at max_tokens and never ran. Recorded as "ok" it crashed
+        # ci_gate score (GEval rejects an empty actual_output).
+        if not answer.strip():
+            invalid = [c.get("name") for c in getattr(last, "invalid_tool_calls", None) or []]
+            row.update(status="error", error_type="EmptyFinalAnswer",
+                       error=f"empty final answer (invalid tool calls: {invalid})")
     except Exception as e:
         row.update(
             status="error",
             error=str(e)[:300],
+            error_type=type(e).__name__,
             retrieval_context=collector.search_outputs,
             tool_calls=collector.tool_calls,
         )

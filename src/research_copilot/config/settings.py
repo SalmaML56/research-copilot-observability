@@ -22,7 +22,6 @@ class Settings:
     groq_api_key: str | None = os.getenv("GROQ_API_KEY")
     cheap_model_name: str = os.getenv("CHEAP_MODEL_NAME", "openai/gpt-oss-20b")
     model_profile: str = os.getenv("MODEL_PROFILE", "primary")
-    prompt_version: str = os.getenv("PROMPT_VERSION", "v1")
     # Phase 7, step 46: agent checkpoints (dedicated checkpoint-postgres).
     # Lives here, not in checkpointed_agent.py, because metrics_setup.py
     # needs it too and checkpointed_agent.py already imports metrics_setup.

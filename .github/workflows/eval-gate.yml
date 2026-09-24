@@ -1,0 +1,160 @@
+# Phase 8, Step 49: run evals on every PR and fail it if mean correctness
+# drops below the threshold. Logic and verdict rules:
+# src/research_copilot/evals/ci_gate.py. Decisions: docs/step49_ci_eval_gate.md.
+#
+# Mark "eval-gate" (and "smoke") as required checks on develop's branch
+# protection - without that a red run doesn't block the merge (plan Q10).
+name: eval-gate
+
+on:
+  pull_request:
+    branches: [develop, main]
+  # Plan Q4: manual runs. GitHub only offers workflow_dispatch for workflow
+  # files on the default branch (main), so this appears once merged there.
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: "Override the mean-correctness threshold"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # A new push to the same PR cancels the in-flight run instead of paying
+  # for both.
+  group: eval-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Baseline minus one prompt (docs/step49_ci_eval_gate.md): post-fix
+  # baseline 1.00 (run 36010057083). Scores are mostly 0 or 1 (one 0.80 in
+  # run 36012242688), so 0.6 tolerates one fully failed prompt if the other
+  # two are near 1.0, and fails on two.
+  EVAL_GATE_THRESHOLD: "0.6"
+  # No Langfuse in CI: keep the SDK fully off (with empty keys it still tried
+  # to export to a relative URL). prompt_version is stamped local-<hash>.
+  LANGFUSE_TRACING_ENABLED: "false"
+  DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+  PYTHONUNBUFFERED: "1"
+
+# astral-sh/setup-uv publishes no floating major tag: @v10 failed on the
+# first real run ("unable to find version `v10`"), so it's pinned exactly.
+jobs:
+  smoke:
+    # $0: no secrets, no real API calls.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Compile
+        run: uv run python -m compileall -q src scripts tests
+      - name: Unit tests
+        run: uv run pytest -q tests/
+      - name: Real agent graph end to end on the stub model
+        env:
+          MODEL_PROFILE: stub
+        run: |
+          uv run python -m research_copilot.evals.ci_gate capture --id rc-001 --out-dir smoke/
+          uv run python -c "import json; r = json.loads(open('smoke/rc-001.jsonl').readline()); assert r['status'] == 'ok', r; print('stub run ok:', r['tool_calls'])"
+
+  capture:
+    needs: smoke
+    # Fork PRs get no secrets; eval-gate reports them as not evaluated.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    # Step 42 measured 822s mean, 1745s max per real run.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        id: [rc-001, rc-002, rc-003]
+    steps:
+      - name: Check secret
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          if [ -z "$DEEPSEEK_API_KEY" ]; then
+            echo "::error title=Missing secret::DEEPSEEK_API_KEY is not set in this repository's Actions secrets."
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Capture ${{ matrix.id }} (DeepSeek)
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MODEL_PROFILE: primary
+        run: uv run python -m research_copilot.evals.ci_gate capture --id ${{ matrix.id }} --out-dir runs/
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: runs-${{ matrix.id }}
+          path: runs/
+          retention-days: 14
+
+  eval-gate:
+    # always(): a skipped job counts as passing for a required check, so
+    # this one has to run - and fail - when smoke did.
+    needs: [smoke, capture]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Smoke must pass
+        if: needs.smoke.result != 'success'
+        run: |
+          echo "::error::smoke job result: ${{ needs.smoke.result }}"
+          exit 1
+      - name: Fork PR - not evaluated
+        if: needs.capture.result == 'skipped'
+        run: |
+          echo "::warning title=Eval gate not run::PRs from forks get no secrets, so no evals ran. Evaluate after merging into a branch of this repo."
+          echo "## ⚠️ Eval gate: NOT RUN (fork PR, no secrets)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Check secret
+        if: needs.capture.result != 'skipped'
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "::error title=Missing secret::GROQ_API_KEY is not set in this repository's Actions secrets."
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+        if: needs.capture.result != 'skipped'
+      - uses: astral-sh/setup-uv@v10.2.0
+        if: needs.capture.result != 'skipped'
+        with:
+          enable-cache: true
+      - if: needs.capture.result != 'skipped'
+        run: uv sync --frozen
+      - uses: actions/download-artifact@v8
+        if: needs.capture.result != 'skipped'
+        # No artifacts at all (every capture died before uploading) must still
+        # reach `score`, which reports the missing rows as inconclusive.
+        continue-on-error: true
+        with:
+          pattern: runs-*
+          path: runs/
+          merge-multiple: true
+      - name: Score and decide
+        if: needs.capture.result != 'skipped'
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          THRESHOLD: ${{ inputs.threshold || env.EVAL_GATE_THRESHOLD }}
+        run: |
+          mkdir -p runs
+          uv run python -m research_copilot.evals.ci_gate score --runs-dir runs/ --threshold "$THRESHOLD"
+      - uses: actions/upload-artifact@v7
+        if: always() && needs.capture.result != 'skipped'
+        with:
+          name: gate-result
+          path: runs/
+          retention-days: 30
