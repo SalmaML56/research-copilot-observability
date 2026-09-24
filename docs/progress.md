@@ -462,8 +462,9 @@ completed (1641-char answer).
 ## Blockers / open decisions
 - Commit fbcdf08 (already on develop before this review cycle) claims to address
   MODEL_PROFILE validation and idempotent otel setup, among other things.
-  These specific claims (Step 12, Step 20) still need fresh independent
-  verification before being trusted or marked done - this is next up.
+  These specific claims (Step 12, Step 20) needed fresh independent
+  verification before being trusted — RESOLVED. Step 12 (MODEL_PROFILE
+  validation) verified in PR #11, Step 20 (idempotent otel setup) in PR #12.
 - FastAPI root-span identity gap (see Steps 5/24 above) — RESOLVED in
   Phase 5. Fixed in the handler rather than in middleware; the remaining
   ASGI send/receive sub-spans are documented as an accepted limitation.
