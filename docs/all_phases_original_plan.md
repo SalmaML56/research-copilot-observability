@@ -114,7 +114,7 @@ Branch: phase-8/ci-cd-pipeline
     onto every trace.
 51. Write a one-page runbook for diagnosing and fixing a bad trace end-to-end.
 
-STATUS: NOT STARTED
+STATUS: DONE (branch phase-8/ci-cd-pipeline, PR #34 into develop pending)
 
 ## Stretch goals (optional, only after Phase 8)
 1. Trace an MCP tool server with MCP semantic conventions.

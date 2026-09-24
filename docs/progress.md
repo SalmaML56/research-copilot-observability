@@ -1,8 +1,47 @@
 # docs/progress.md
 
 ## Current phase and branch
-Phase: 7 — Production hardening (DONE, 2026-09-23)
-Branch: phase-7/production-hardening
+Phase: 8 — Close the loop with CI (DONE, 2026-09-24)
+Branch: phase-8/ci-cd-pipeline (draft PR #34 into develop)
+
+## Phase 8 — Close the loop with CI — DONE (2026-09-24)
+
+The Phase 8 plan file (the Q1-Q10 referenced in code comments) was never
+committed and was lost in a Codespace restart; the decisions are rebuilt
+in the step docs from the comments and commit messages.
+
+- Step 50 — prompt versioning. The lead, researcher and writer system prompts
+  are synced from code to Langfuse prompt management
+  (`scripts/phase8/sync_prompts.py`). `prompt_version` is stamped on API
+  spans, logs, spanmetrics and eval traces: Langfuse version numbers when
+  the text matches, `local-<hash>` otherwise (including CI). Exercised on a real
+  change: the Step 51 fix created researcher v2 and writer v2, and the stamp
+  is now `lead=1,researcher=2,writer=2`. See `docs/step50_prompt_versioning.md`.
+- Step 49 — PR eval gate (`.github/workflows/eval-gate.yml`). A $0 stub-model
+  smoke job, then rc-001..003 on DeepSeek in parallel, Groq-judged correctness,
+  and a pass/fail/inconclusive verdict. `DEEPSEEK_API_KEY` and `GROQ_API_KEY`
+  are confirmed reachable (masked, checks passed, real API calls succeeded).
+  Threshold **0.6**, set from the post-fix CI baseline of 1.00 (run
+  36010057083). **Real findings:** `setup-uv@v10` doesn't exist (pinned
+  v10.2.0). The GEval judge scored "could not complete" reports 1.00 because
+  they name the expected keywords, so rows where `write_file` never ran now
+  score 0 without the judge. `capture_runs` was missing Step 42's
+  empty-answer guard (it crashed the scorer). A fixed local run label merged
+  re-runs into one Langfuse trace. **Owner action:** make `eval-gate` and
+  `smoke` required checks on develop (token gets 403). See
+  `docs/step49_ci_eval_gate.md`.
+- Step 51 — runbook `docs/step51_bad_trace_runbook.md`, plus
+  `scripts/phase8/inspect_trace.py`. **Real finding (root cause of
+  the Step 18/38 handoff failures):** it wasn't `FilesystemMiddleware` state
+  or a race. The researcher's single `write_file` call (~15k chars of notes)
+  hit `MAX_TOKENS=4096` (`finish_reason=length`, reproduced), its JSON args
+  were cut off, and LangChain dropped it as an `invalid_tool_call`. Every
+  failed handoff in all 6 Step 38 traces had this. Once that was fixed, the
+  lead's `finalize_report` (whole report as the argument) failed the same
+  way. Fix: ~800-word caps on notes and report. Also: Step 38's rc-002
+  "pass" was a judge false positive, so the real Step 38 success rate was
+  1/5. After the fix, CI went from 0/3 (honest) to 3/3 correctness 1.00,
+  cost $0.46 → $0.21, slowest prompt 1,641s → 182s.
 
 ## Phase 7 — Production hardening — DONE (2026-09-23)
 
