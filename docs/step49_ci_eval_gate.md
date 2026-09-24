@@ -103,9 +103,10 @@ on GitHub's runners.
 In 36010057083, every row passed the no-notes precheck (`write_file` ran)
 and every judge reason lists all three expected facts.
 
-**Threshold: 0.6.** With 3 prompts and scores of 0 or 1, the mean can only
-be 0, 0.33, 0.67 or 1. So 0.6 lets one flaky prompt through and fails the
-PR when two of three break. The baseline is one post-fix run; revisit the
+**Threshold: 0.6.** GEval scores here are mostly 0 or 1, but not always
+(run 36012242688 scored rc-002 0.80, mean 0.93). 0.6 lets one fully failed
+prompt through when the other two score near 1.0 (1+1+0 = 0.67, but
+0.8+0.8+0 = 0.53 fails), and fails the PR when two of three break. The baseline is one post-fix run; revisit the
 threshold if the gate flakes. The pre-fix code would have failed this gate
 (0.00 honest).
 
