@@ -51,7 +51,7 @@ def load_dataset() -> list[dict]:
         return [json.loads(line) for line in f]
 
 
-def run_one(entry: dict, run_label: str) -> dict:
+def run_one(entry: dict, run_label: str, extra_callbacks: list = ()) -> dict:
     trace_id = get_client().create_trace_id(seed=f"{run_label}:{entry['id']}")
     collector = ToolCollector()
     row = {
@@ -68,7 +68,7 @@ def run_one(entry: dict, run_label: str) -> dict:
         result = agent.invoke(
             {"messages": [{"role": "user", "content": entry["prompt"]}]},
             config={
-                "callbacks": [CallbackHandler(trace_context={"trace_id": trace_id}), collector],
+                "callbacks": [CallbackHandler(trace_context={"trace_id": trace_id}), collector, *extra_callbacks],
                 "metadata": {
                     "langfuse_session_id": f"{run_label}-{entry['id']}",
                     "langfuse_user_id": "eval-capture",
@@ -87,6 +87,7 @@ def run_one(entry: dict, run_label: str) -> dict:
         row.update(
             status="error",
             error=str(e)[:300],
+            error_type=type(e).__name__,
             retrieval_context=collector.search_outputs,
             tool_calls=collector.tool_calls,
         )

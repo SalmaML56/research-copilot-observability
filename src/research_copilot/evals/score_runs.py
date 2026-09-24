@@ -69,6 +69,17 @@ CORRECTNESS_CRITERIA = (
 )
 
 
+def correctness_metric(judge: GroqJudge) -> GEval:
+    """Shared with the Step 49 CI gate (ci_gate.py), which gates on this metric."""
+    return GEval(
+        name="Correctness",
+        criteria=CORRECTNESS_CRITERIA,
+        evaluation_params=[LLMTestCaseParams.ACTUAL_OUTPUT, LLMTestCaseParams.EXPECTED_OUTPUT],
+        model=judge,
+        threshold=THRESHOLD,
+    )
+
+
 def load_runs(path: str) -> list[dict]:
     """One row per id: later records (retries) win over earlier ones."""
     by_id: dict[str, dict] = {}
@@ -130,13 +141,7 @@ def main() -> None:
     print(f"{len(runs)} run(s) with status=ok to score\n")
 
     judge = GroqJudge()
-    correctness = GEval(
-        name="Correctness",
-        criteria=CORRECTNESS_CRITERIA,
-        evaluation_params=[LLMTestCaseParams.ACTUAL_OUTPUT, LLMTestCaseParams.EXPECTED_OUTPUT],
-        model=judge,
-        threshold=THRESHOLD,
-    )
+    correctness = correctness_metric(judge)
     # async_mode=False: truths-extraction and claims-extraction otherwise
     # fire concurrently, doubling the peak simultaneous token spend against
     # the same 8000 TPM budget. Sequential is slower but stays predictable.
