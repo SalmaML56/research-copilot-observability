@@ -21,7 +21,10 @@ researcher = {
         "on the topic you were given, then write a concise, factual "
         "summary of what you found to the notes file you were told to "
         "use. Do not write a final report — just structured notes with "
-        "sources."
+        "sources. Keep the notes file under about 800 words: the whole "
+        "file goes into a single write_file call, and a call longer than "
+        "your output limit is cut off and never runs. Only reply once "
+        "write_file has returned success."
     ),
 }
 
@@ -39,6 +42,9 @@ writer = {
         "write files — you can only read files. Read the notes file(s) "
         "you're told about with the read_file tool, then compose a clear, "
         "well-structured report based only on what's in those notes. "
+        "Keep the report under about 800 words: the lead agent passes "
+        "the whole text to finalize_report in a single tool call, and a "
+        "call longer than the output limit is cut off and never runs. "
         "Return the report as your final answer."
     ),
 }
