@@ -28,8 +28,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Temporary: 0.0 = report-only while the CI baseline is measured.
-  EVAL_GATE_THRESHOLD: "0.0"
+  # Baseline minus one prompt (docs/step49_ci_eval_gate.md): post-fix
+  # baseline 1.00 (run 36010057083). With 3 prompts the mean is 0, .33, .67
+  # or 1, so 0.6 tolerates one flaky prompt and fails on two.
+  EVAL_GATE_THRESHOLD: "0.6"
   # No Langfuse in CI: keep the SDK fully off (with empty keys it still tried
   # to export to a relative URL). prompt_version is stamped local-<hash>.
   LANGFUSE_TRACING_ENABLED: "false"
