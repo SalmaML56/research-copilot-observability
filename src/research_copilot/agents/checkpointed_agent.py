@@ -2,7 +2,8 @@
 Phase 1, step 9: checkpointer (SQLite). Confirmed working.
 
 Phase 7, step 46: checkpoints moved from SQLite to Postgres (the dedicated
-checkpoint-postgres service, docs/phase7_plan.md Q3a). The old
+checkpoint-postgres service, Phase 7 plan Q3a -
+git show e5eb72e:docs/phase7_plan.md). The old
 checkpoints.sqlite is left on disk untouched; nothing was migrated (Q4a).
 
 Phase 1, step 10: human-in-the-loop pause via create_deep_agent's native

@@ -2,7 +2,7 @@
 
 Config: `collector/otel-collector-config.yaml` (`traces/in` → `forward/sampling`
 → `traces/sampled` with `tail_sampling`). Session flag:
-`observability/identity.py::session_sampled`. Plan: `docs/phase7_plan.md` §44,
+`observability/identity.py::session_sampled`. Plan: `docs/phase7_plan.md` (removed at the Phase 8 milestone; `git show e5eb72e:docs/phase7_plan.md`) §44,
 Q5, Q6.
 
 Policies (OR'd):

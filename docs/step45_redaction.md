@@ -1,6 +1,6 @@
 # Step 45 — Redaction of sensitive content: verification
 
-Plan: `docs/phase7_plan.md` §45, Q7a/Q7b.
+Plan: `docs/phase7_plan.md` (removed at the Phase 8 milestone; `git show e5eb72e:docs/phase7_plan.md`) §45, Q7a/Q7b.
 
 ## What was built
 
