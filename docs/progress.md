@@ -45,7 +45,7 @@ in the step docs from the comments and commit messages.
 
 ## Phase 7 — Production hardening — DONE (2026-09-23)
 
-Plan and decisions (Q1–Q13): `docs/phase7_plan.md`. Order used: 46 → 44 →
+Plan and decisions (Q1–Q13): `docs/phase7_plan.md` (removed at the Phase 8 milestone; `git show e5eb72e:docs/phase7_plan.md`). Order used: 46 → 44 →
 45 → 48 → 47 (Q11).
 
 - Step 46 — Postgres checkpoints + streaming. A dedicated

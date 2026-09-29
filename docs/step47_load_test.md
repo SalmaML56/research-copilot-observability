@@ -1,6 +1,6 @@
 # Step 47 — Load test: 20 concurrent sessions, no cross-session leakage
 
-Plan: `docs/phase7_plan.md` §47, Q8c, Q9a. Script: `scripts/load_test.py`.
+Plan: `docs/phase7_plan.md` (removed at the Phase 8 milestone; `git show e5eb72e:docs/phase7_plan.md`) §47, Q8c, Q9a. Script: `scripts/load_test.py`.
 
 ## What was built
 

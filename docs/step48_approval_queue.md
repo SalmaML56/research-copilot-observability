@@ -1,6 +1,6 @@
 # Step 48 — Human-in-the-loop approval queue metrics: verification
 
-Plan: `docs/phase7_plan.md` §48, Q10a/Q10b, Q12b.
+Plan: `docs/phase7_plan.md` (removed at the Phase 8 milestone; `git show e5eb72e:docs/phase7_plan.md`) §48, Q10a/Q10b, Q12b.
 
 ## What was built
 
